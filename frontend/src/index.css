@@ -1,0 +1,119 @@
+:root {
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #242424;
+
+  /* === DUSK THEME COLOR SYSTEM === */
+
+  /* Core Backgrounds */
+  --background-primary: #0a0a0f;       /* Deep space black */
+  --background-secondary: #13131f;     /* Dark blue-black */
+  --background-elevated: #1a1a2e;      /* Elevated surface */
+  --background-card: #16213e;          /* Card background (dark navy) */
+  --background-hover: #1e2a44;         /* Hover state for cards */
+
+  /* Accent Colors - Blue */
+  --accent-blue-deep: #0f3460;         /* Deep ocean blue */
+  --accent-blue-primary: #2196f3;      /* Bright blue (CTAs) */
+  --accent-blue-glow: #00d4ff;         /* Cyan glow */
+  --accent-blue-hover: #42a5f5;        /* Blue hover state */
+
+  /* Accent Colors - Pink */
+  --accent-pink-primary: #e94560;      /* Hot pink */
+  --accent-pink-bright: #ff6b9d;       /* Bright pink (highlights) */
+  --accent-pink-glow: #ff1744;         /* Pink neon glow */
+  --accent-pink-hover: #ff5c8d;        /* Pink hover state */
+
+  /* Accent Colors - Purple */
+  --accent-purple: #7c3aed;            /* Purple (bridges blue/pink) */
+  --accent-purple-light: #a78bfa;      /* Light purple */
+
+  /* Text Colors */
+  --text-primary: rgba(255, 255, 255, 0.95);
+  --text-secondary: rgba(255, 255, 255, 0.7);
+  --text-tertiary: rgba(255, 255, 255, 0.5);
+  --text-muted: rgba(255, 255, 255, 0.35);
+
+  /* Border Colors */
+  --border-default: rgba(33, 150, 243, 0.2);
+  --border-hover: rgba(33, 150, 243, 0.4);
+  --border-active: var(--accent-blue-primary);
+  --border-pink: rgba(233, 69, 96, 0.3);
+
+  /* Success/Warning/Error */
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+
+  /* Shadows & Glows */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
+  --glow-blue: 0 0 20px rgba(0, 212, 255, 0.3);
+  --glow-pink: 0 0 20px rgba(255, 23, 68, 0.3);
+  --glow-purple: 0 0 20px rgba(124, 58, 237, 0.3);
+
+  /* Transitions */
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.25s ease;
+  --transition-slow: 0.4s ease;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  font-weight: 500;
+  color: var(--accent-blue-primary);
+  text-decoration: inherit;
+  transition: var(--transition-fast);
+}
+a:hover {
+  color: var(--accent-blue-glow);
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-width: 320px;
+  min-height: 100vh;
+  background: var(--background-primary);
+  color: var(--text-primary);
+}
+
+h1 {
+  font-size: 3.2em;
+  line-height: 1.1;
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid var(--border-default);
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  background-color: var(--background-elevated);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all var(--transition-normal);
+}
+button:hover {
+  border-color: var(--accent-blue-primary);
+  background-color: var(--background-card);
+  box-shadow: var(--glow-blue);
+}
+button:focus,
+button:focus-visible {
+  outline: 2px solid var(--accent-blue-primary);
+  outline-offset: 2px;
+}
+
+/* Dusk theme is always active - no light mode */

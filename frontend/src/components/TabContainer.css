@@ -1,0 +1,103 @@
+.tab-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.tab-nav {
+  display: flex;
+  gap: 4px;
+  padding: 8px 8px 0 8px;
+  background: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(10px) saturate(150%);
+  -webkit-backdrop-filter: blur(10px) saturate(150%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+
+.tab-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  background: transparent;
+  border: none;
+  border-radius: 8px 8px 0 0;
+  color: var(--text-tertiary);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-normal);
+  position: relative;
+  white-space: nowrap;
+}
+
+.tab-button:hover {
+  background: var(--background-elevated);
+  color: var(--text-primary);
+  box-shadow: 0 2px 8px rgba(33, 150, 243, 0.1);
+}
+
+.tab-button.active {
+  background: linear-gradient(135deg, rgba(33, 150, 243, 0.15), rgba(233, 69, 96, 0.1));
+  color: var(--accent-blue-primary);
+  border-bottom: 2px solid var(--accent-blue-primary);
+  box-shadow: var(--glow-blue);
+}
+
+.tab-icon {
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+}
+
+.tab-label {
+  user-select: none;
+}
+
+.tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  background: var(--accent-pink-primary);
+  color: white;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 9px;
+  box-shadow: var(--glow-pink);
+  animation: pulse-badge 2s ease-in-out infinite;
+}
+
+.tab-button.active .tab-badge {
+  background: var(--accent-blue-primary);
+  box-shadow: var(--glow-blue);
+}
+
+@keyframes pulse-badge {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 0.9;
+  }
+}
+
+.tab-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+}
+
+/* Ensure tab content fills available space */
+.tab-content > * {
+  flex: 1;
+  overflow: auto;
+}

@@ -1,0 +1,12 @@
+
+> frontend@0.0.0 dev
+> vite
+
+
+  VITE v7.2.2  ready in 133 ms
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: use --host to expose
+3:09:46 AM [vite] (client) hmr update /src/components/Simulator.tsx
+3:10:10 AM [vite] (client) hmr update /src/components/Simulator.tsx
+3:11:14 AM [vite] (client) hmr update /src/components/SceneObject.tsx

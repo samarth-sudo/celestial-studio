@@ -1,0 +1,315 @@
+/**
+ * Algorithm Controls Component
+ *
+ * UI for managing and applying algorithms to robots
+ */
+
+import { useState, useEffect } from 'react'
+import { getAlgorithmManager, type Algorithm } from '../services/AlgorithmManager'
+import AlgorithmLibrary from './AlgorithmLibrary'
+import './AlgorithmControls.css'
+
+interface AlgorithmControlsProps {
+  robotId: string
+  robotType: 'mobile' | 'arm' | 'drone'
+  onAlgorithmApplied?: (algorithm: Algorithm) => void
+  onTestInSandbox?: (algorithmId: string) => void
+}
+
+export default function AlgorithmControls({
+  robotId,
+  robotType,
+  onAlgorithmApplied,
+  onTestInSandbox
+}: AlgorithmControlsProps) {
+  const [algorithms, setAlgorithms] = useState<Algorithm[]>([])
+  const [activeAlgorithmId, setActiveAlgorithmId] = useState<string | null>(null)
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [description, setDescription] = useState('')
+  const [algorithmType, setAlgorithmType] = useState<Algorithm['type']>('path_planning')
+  const [showGenerator, setShowGenerator] = useState(false)
+  const [expandedCodeId, setExpandedCodeId] = useState<string | null>(null)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [showLibrary, setShowLibrary] = useState(false)
+
+  const manager = getAlgorithmManager()
+
+  useEffect(() => {
+    // Load algorithms
+    loadAlgorithms()
+  }, [])
+
+  const loadAlgorithms = () => {
+    const allAlgorithms = manager.getAllAlgorithms()
+    setAlgorithms(allAlgorithms)
+
+    // Check if robot has active algorithm
+    const active = manager.getActiveAlgorithm(robotId)
+    if (active) {
+      setActiveAlgorithmId(active.id)
+    }
+  }
+
+  const handleGenerate = async () => {
+    if (!description.trim()) return
+
+    setIsGenerating(true)
+    try {
+      console.log('🚀 Starting algorithm generation...')
+      const algorithm = await manager.generateAlgorithm(
+        description,
+        robotType,
+        algorithmType
+      )
+
+      setAlgorithms(prev => [...prev, algorithm])
+      setDescription('')
+      setShowGenerator(false)
+
+      console.log('✅ Algorithm generated:', algorithm.name)
+      // Optional: Show success message
+      // alert(`✅ Successfully generated: ${algorithm.name}`)
+    } catch (error: any) {
+      console.error('❌ Generation failed:', error)
+      const errorMessage = error.message || 'Failed to generate algorithm. Check console for details.'
+      alert(`❌ Generation failed:\n\n${errorMessage}\n\nNote: Algorithm generation takes 10-20 seconds. Check browser console for detailed logs.`)
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  const handleApply = (algorithmId: string) => {
+    try {
+      const algorithm = algorithms.find(a => a.id === algorithmId)
+      if (!algorithm) return
+
+      manager.applyAlgorithm(robotId, algorithmId)
+      setActiveAlgorithmId(algorithmId)
+
+      if (onAlgorithmApplied) {
+        onAlgorithmApplied(algorithm)
+      }
+
+      console.log(`🔄 Applied ${algorithm.name} to robot`)
+    } catch (error) {
+      console.error('❌ Failed to apply algorithm:', error)
+      alert('Failed to apply algorithm')
+    }
+  }
+
+  const toggleCodeView = (algorithmId: string) => {
+    setExpandedCodeId(expandedCodeId === algorithmId ? null : algorithmId)
+  }
+
+  const copyCode = async (code: string, algorithmId: string) => {
+    try {
+      await navigator.clipboard.writeText(code)
+      setCopiedId(algorithmId)
+      setTimeout(() => setCopiedId(null), 2000)
+    } catch (error) {
+      console.error('Failed to copy code:', error)
+    }
+  }
+
+  const getAlgorithmTypeColor = (type: Algorithm['type']) => {
+    const colors = {
+      path_planning: '#3498db',
+      obstacle_avoidance: '#e74c3c',
+      inverse_kinematics: '#9b59b6',
+      computer_vision: '#f39c12',
+      motion_control: '#2ecc71'
+    }
+    return colors[type] || '#95a5a6'
+  }
+
+  const handleUseTemplate = async (template: any) => {
+    try {
+      // Create algorithm from template
+      const algorithm: Algorithm = {
+        id: `template-${Date.now()}`,
+        name: template.name,
+        type: template.type,
+        description: template.description,
+        code: template.code_template,
+        complexity: template.complexity,
+        parameters: template.parameters,
+        metadata: {
+          robotType: robotType,
+          generatedAt: new Date().toISOString(),
+          isTemplate: true
+        }
+      }
+
+      // Add to algorithm manager
+      manager.addAlgorithm(algorithm)
+      setAlgorithms(prev => [...prev, algorithm])
+      setShowLibrary(false)
+
+      console.log('✅ Template added:', template.name)
+    } catch (error) {
+      console.error('❌ Failed to use template:', error)
+      alert('Failed to use template')
+    }
+  }
+
+  const handleCustomizeTemplate = (template: any) => {
+    // Pre-fill the generator with template info
+    setAlgorithmType(template.type)
+    setDescription(`Based on ${template.name}: ${template.description}`)
+    setShowLibrary(false)
+    setShowGenerator(true)
+  }
+
+  return (
+    <div className="algorithm-controls">
+      <div className="controls-header">
+        <h3>🧠 Algorithm Controls</h3>
+        <div className="header-buttons">
+          <button
+            className="browse-btn"
+            onClick={() => setShowLibrary(true)}
+          >
+            📚 Browse Templates
+          </button>
+          <button
+            className="generate-btn"
+            onClick={() => setShowGenerator(!showGenerator)}
+          >
+            {showGenerator ? '✕ Close' : '+ Generate New'}
+          </button>
+        </div>
+      </div>
+
+      {showGenerator && (
+        <div className="algorithm-generator">
+          <h4>Generate Algorithm</h4>
+
+          <div className="form-group">
+            <label>Algorithm Type:</label>
+            <select
+              value={algorithmType}
+              onChange={(e) => setAlgorithmType(e.target.value as Algorithm['type'])}
+              disabled={isGenerating}
+            >
+              <option value="path_planning">Path Planning</option>
+              <option value="obstacle_avoidance">Obstacle Avoidance</option>
+              <option value="inverse_kinematics">Inverse Kinematics</option>
+              <option value="computer_vision">Computer Vision</option>
+              <option value="motion_control">Motion Control</option>
+            </select>
+          </div>
+
+          <div className="form-group">
+            <label>Description:</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Describe the algorithm behavior...&#10;&#10;Examples:&#10;- Navigate to goal while avoiding obstacles using DWA&#10;- Find optimal path using A* algorithm&#10;- Reach target position with FABRIK IK solver"
+              rows={4}
+              disabled={isGenerating}
+            />
+          </div>
+
+          <button
+            className="generate-algorithm-btn"
+            onClick={handleGenerate}
+            disabled={isGenerating || !description.trim()}
+          >
+            {isGenerating ? '⏳ Generating...' : '🚀 Generate Algorithm'}
+          </button>
+
+          {isGenerating && (
+            <div className="generation-status">
+              <p>⚙️ Generating algorithm with AI...</p>
+              <p className="status-note">This typically takes 10-20 seconds. Please wait...</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="algorithms-list">
+        <h4>Available Algorithms ({algorithms.length})</h4>
+
+        {algorithms.length === 0 ? (
+          <p className="empty-state">No algorithms yet. Generate one to get started!</p>
+        ) : (
+          algorithms.map(algo => (
+            <div
+              key={algo.id}
+              className={`algorithm-card ${activeAlgorithmId === algo.id ? 'active' : ''}`}
+            >
+              <div className="algorithm-header">
+                <h5>{algo.name}</h5>
+                <span
+                  className="algorithm-type-badge"
+                  style={{ backgroundColor: getAlgorithmTypeColor(algo.type) }}
+                >
+                  {algo.type.replace('_', ' ')}
+                </span>
+              </div>
+
+              <p className="algorithm-description">{algo.description}</p>
+
+              <div className="algorithm-meta">
+                <span className="complexity">{algo.complexity}</span>
+                <span className="param-count">
+                  {algo.parameters.length} parameters
+                </span>
+              </div>
+
+              <button
+                className={`apply-btn ${activeAlgorithmId === algo.id ? 'applied' : ''}`}
+                onClick={() => handleApply(algo.id)}
+                disabled={activeAlgorithmId === algo.id}
+              >
+                {activeAlgorithmId === algo.id ? '✓ Active' : 'Apply to Robot'}
+              </button>
+
+              <div className="algorithm-actions">
+                <button
+                  className="view-code-btn"
+                  onClick={() => toggleCodeView(algo.id)}
+                >
+                  {expandedCodeId === algo.id ? '▲ Hide Code' : '▼ View Code'}
+                </button>
+
+                {algo.type === 'path_planning' && onTestInSandbox && (
+                  <button
+                    className="test-sandbox-btn"
+                    onClick={() => onTestInSandbox(algo.id)}
+                  >
+                    🎯 Test in Path Sandbox
+                  </button>
+                )}
+              </div>
+
+              {expandedCodeId === algo.id && (
+                <div className="code-section">
+                  <div className="code-header">
+                    <span>Algorithm Implementation</span>
+                    <button
+                      className="copy-code-btn"
+                      onClick={() => copyCode(algo.code, algo.id)}
+                    >
+                      {copiedId === algo.id ? '✓ Copied!' : '📋 Copy'}
+                    </button>
+                  </div>
+                  <pre className="code-block">
+                    <code>{algo.code}</code>
+                  </pre>
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+
+      <AlgorithmLibrary
+        isOpen={showLibrary}
+        onClose={() => setShowLibrary(false)}
+        onUseTemplate={handleUseTemplate}
+        onCustomize={handleCustomizeTemplate}
+      />
+    </div>
+  )
+}
