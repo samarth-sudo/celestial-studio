@@ -65,6 +65,7 @@ if ! pgrep -x "ollama" > /dev/null; then
     log_warning "Ollama is not running. Starting Ollama..."
     ollama serve > logs_ollama.txt 2>&1 &
     OLLAMA_PID=$!
+    echo $OLLAMA_PID > .ollama_pid
     sleep 2
 
     if ! pgrep -x "ollama" > /dev/null; then
@@ -100,9 +101,10 @@ fi
 # ========== Step 2: Kill Existing Processes ==========
 log_info "Cleaning up existing processes..."
 
-# Kill processes on ports 8000 and 5173
+# Kill processes on ports 8000, 5173, and 5174
 lsof -ti:8000 | xargs kill -9 2>/dev/null
 lsof -ti:5173 | xargs kill -9 2>/dev/null
+lsof -ti:5174 | xargs kill -9 2>/dev/null
 
 sleep 1
 log_success "Port cleanup complete"
@@ -114,9 +116,11 @@ log_info "📡 Starting backend API on port 8000..."
 # Activate virtual environment and start backend
 source venv/bin/activate
 
-# Start backend in background
-python backend/main.py > logs_backend.txt 2>&1 &
+# Start backend in background with uvicorn
+cd backend
+python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload > ../logs_backend.txt 2>&1 &
 BACKEND_PID=$!
+cd ..
 
 # Verify backend process started
 sleep 2

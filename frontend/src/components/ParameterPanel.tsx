@@ -37,7 +37,7 @@ export default function ParameterPanel({
       setAlgorithm(algo)
       setParameters(algo.parameters)
     }
-  }, [algorithmId])
+  }, [algorithmId, manager])
 
   const handleParameterChange = (paramName: string, value: any) => {
     try {

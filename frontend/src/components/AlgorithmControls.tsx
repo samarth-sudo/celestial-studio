@@ -4,8 +4,9 @@
  * UI for managing and applying algorithms to robots
  */
 
-import { useState, useEffect } from 'react'
-import { getAlgorithmManager, type Algorithm } from '../services/AlgorithmManager'
+import { useState, useEffect, useCallback } from 'react'
+import { getAlgorithmManager, type Algorithm, type AlgorithmParameter } from '../services/AlgorithmManager'
+import type { AlgorithmType } from '../types'
 import AlgorithmLibrary from './AlgorithmLibrary'
 import './AlgorithmControls.css'
 
@@ -14,6 +15,15 @@ interface AlgorithmControlsProps {
   robotType: 'mobile' | 'arm' | 'drone'
   onAlgorithmApplied?: (algorithm: Algorithm) => void
   onTestInSandbox?: (algorithmId: string) => void
+}
+
+interface AlgorithmTemplate {
+  name: string
+  type: AlgorithmType
+  description: string
+  code_template: string
+  complexity: string
+  parameters: AlgorithmParameter[]
 }
 
 export default function AlgorithmControls({
@@ -34,12 +44,7 @@ export default function AlgorithmControls({
 
   const manager = getAlgorithmManager()
 
-  useEffect(() => {
-    // Load algorithms
-    loadAlgorithms()
-  }, [])
-
-  const loadAlgorithms = () => {
+  const loadAlgorithms = useCallback(() => {
     const allAlgorithms = manager.getAllAlgorithms()
     setAlgorithms(allAlgorithms)
 
@@ -48,7 +53,12 @@ export default function AlgorithmControls({
     if (active) {
       setActiveAlgorithmId(active.id)
     }
-  }
+  }, [manager, robotId])
+
+  useEffect(() => {
+    // Load algorithms
+    loadAlgorithms()
+  }, [loadAlgorithms])
 
   const handleGenerate = async () => {
     if (!description.trim()) return
@@ -69,9 +79,9 @@ export default function AlgorithmControls({
       console.log('✅ Algorithm generated:', algorithm.name)
       // Optional: Show success message
       // alert(`✅ Successfully generated: ${algorithm.name}`)
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('❌ Generation failed:', error)
-      const errorMessage = error.message || 'Failed to generate algorithm. Check console for details.'
+      const errorMessage = error instanceof Error ? error.message : 'Failed to generate algorithm. Check console for details.'
       alert(`❌ Generation failed:\n\n${errorMessage}\n\nNote: Algorithm generation takes 10-20 seconds. Check browser console for detailed logs.`)
     } finally {
       setIsGenerating(false)
@@ -122,7 +132,7 @@ export default function AlgorithmControls({
     return colors[type] || '#95a5a6'
   }
 
-  const handleUseTemplate = async (template: any) => {
+  const handleUseTemplate = async (template: AlgorithmTemplate) => {
     try {
       // Create algorithm from template
       const algorithm: Algorithm = {
@@ -152,7 +162,7 @@ export default function AlgorithmControls({
     }
   }
 
-  const handleCustomizeTemplate = (template: any) => {
+  const handleCustomizeTemplate = (template: AlgorithmTemplate) => {
     // Pre-fill the generator with template info
     setAlgorithmType(template.type)
     setDescription(`Based on ${template.name}: ${template.description}`)

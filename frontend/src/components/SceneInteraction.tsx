@@ -55,7 +55,7 @@ export default function SceneInteraction({
       }
     }
 
-    const handleClick = (_event: MouseEvent) => {
+    const handleClick = () => {
       if (mode === 'none' || !hoverPosition) return
 
       const clickPosition = hoverPosition.clone()

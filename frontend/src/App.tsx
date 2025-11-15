@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import type { SceneConfig } from './types'
 import LandingPage from './components/LandingPage'
 import ConversationalChat from './components/ConversationalChat'
 import Simulator from './components/Simulator'
@@ -7,7 +8,7 @@ import './App.css'
 function App() {
   const [showLanding, setShowLanding] = useState(true)
   const [initialPrompt, setInitialPrompt] = useState('')
-  const [sceneConfig, setSceneConfig] = useState<any>(null)
+  const [sceneConfig, setSceneConfig] = useState<SceneConfig | null>(null)
 
   // Generate a unique user ID for conversational chat
   const userId = 'user-' + Math.random().toString(36).substr(2, 9)
@@ -17,7 +18,7 @@ function App() {
     setShowLanding(false)
   }
 
-  const handleSimulationGenerated = (sceneConfig: any) => {
+  const handleSimulationGenerated = (sceneConfig: SceneConfig) => {
     setSceneConfig(sceneConfig)
     console.log('🎬 Simulation generated:', sceneConfig)
   }

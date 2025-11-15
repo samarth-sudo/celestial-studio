@@ -78,14 +78,30 @@ a:hover {
   color: var(--accent-blue-glow);
 }
 
+html {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
 body {
   margin: 0;
   display: flex;
-  place-items: center;
+  flex-direction: column;
   min-width: 320px;
-  min-height: 100vh;
+  height: 100%;
+  overflow: hidden;
   background: var(--background-primary);
   color: var(--text-primary);
+}
+
+#root {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 
 h1 {

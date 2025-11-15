@@ -1,7 +1,7 @@
 .app {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100%;
   background: #000000;
   color: var(--text-primary);
   position: relative;
@@ -34,7 +34,7 @@
   left: 50%;
   transform: translateX(-50%);
   width: 100%;
-  height: 80%;
+  
   background: radial-gradient(ellipse at center top,
     rgba(255, 20, 147, 0.2) 0%,
     rgba(255, 105, 180, 0.15) 20%,
@@ -99,14 +99,16 @@
   overflow: hidden;
   position: relative;
   z-index: 1;
+  height: 100%;
 }
 
 .left-panel {
   flex: 0 0 45%;
   min-width: 500px;
+  min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
-  height: 100%;
   overflow: hidden;
   background: rgba(0, 0, 0, 0.4);
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -119,6 +121,8 @@
 .right-panel {
   flex: 1;
   min-width: 500px;
+  min-height: 0;
+  height: 100%;
   background: rgba(0, 0, 0, 0.4);
   border-radius: 16px;
   overflow: hidden;

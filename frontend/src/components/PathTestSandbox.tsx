@@ -19,7 +19,7 @@ interface PathTestSandboxProps {
   }) => void
 }
 
-export default function PathTestSandbox({ robotType: _robotType, selectedAlgorithmId, onSimulate }: PathTestSandboxProps) {
+export default function PathTestSandbox({ selectedAlgorithmId, onSimulate }: PathTestSandboxProps) {
   const [mode, setMode] = useState<InteractionMode>('none')
   const [origin, setOrigin] = useState<THREE.Vector3 | null>(null)
   const [destination, setDestination] = useState<THREE.Vector3 | null>(null)

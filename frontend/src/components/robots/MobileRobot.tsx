@@ -1,24 +1,79 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { RigidBody, type RapierRigidBody } from '@react-three/rapier'
 import * as THREE from 'three'
+import type { ComputedPath } from '../../types/PathPlanning'
 
-export default function MobileRobot() {
+interface MobileRobotProps {
+  onPositionUpdate?: (position: [number, number, number], rotation: [number, number, number]) => void
+  onWaypointUpdate?: (currentWaypoint: number, totalWaypoints: number) => void
+  path?: ComputedPath | null
+  isPaused?: boolean
+}
+
+export default function MobileRobot({ onPositionUpdate, onWaypointUpdate, path, isPaused = false }: MobileRobotProps) {
   const bodyRef = useRef<RapierRigidBody>(null)
-  const [waypoints] = useState([
+
+  // Demo waypoints (used when no path is provided)
+  const demoWaypoints = [
     new THREE.Vector3(0, 0.5, 0),
     new THREE.Vector3(3, 0.5, 0),
     new THREE.Vector3(3, 0.5, 3),
     new THREE.Vector3(0, 0.5, 3),
     new THREE.Vector3(0, 0.5, 0),
-  ])
+  ]
+
+  // Use computed path waypoints if available, otherwise use demo waypoints
+  const [waypoints, setWaypoints] = useState<THREE.Vector3[]>(demoWaypoints)
   const [currentWaypoint, setCurrentWaypoint] = useState(0)
   const speed = 2
+
+  // Update waypoints when path changes
+  useEffect(() => {
+    if (path && path.waypoints && path.waypoints.length > 0) {
+      // Convert path waypoints to include the robot's Y position
+      const pathWithHeight = path.waypoints.map(wp =>
+        new THREE.Vector3(wp.x, 0.5, wp.z)
+      )
+      setWaypoints(pathWithHeight)
+      setCurrentWaypoint(0) // Reset to start of path
+    } else {
+      setWaypoints(demoWaypoints)
+      setCurrentWaypoint(0)
+    }
+  }, [path])
+
+  // Report waypoint progress to parent
+  useEffect(() => {
+    if (onWaypointUpdate) {
+      onWaypointUpdate(currentWaypoint, waypoints.length)
+    }
+  }, [currentWaypoint, waypoints.length, onWaypointUpdate])
 
   useFrame(() => {
     if (!bodyRef.current) return
 
     const position = bodyRef.current.translation()
+    const rotation = bodyRef.current.rotation()
+
+    // Update parent component with current position and rotation
+    if (onPositionUpdate) {
+      // Convert quaternion to Euler angles
+      const euler = new THREE.Euler().setFromQuaternion(
+        new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w)
+      )
+      onPositionUpdate(
+        [position.x, position.y, position.z],
+        [euler.x, euler.y, euler.z]
+      )
+    }
+
+    // Stop movement if paused
+    if (isPaused) {
+      bodyRef.current.setLinvel({ x: 0, y: 0, z: 0 }, true)
+      return
+    }
+
     const target = waypoints[currentWaypoint]
 
     // Calculate direction to target

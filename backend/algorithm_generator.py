@@ -17,6 +17,11 @@ try:
 except ImportError:
     from backend.code_validator import validate_code, ValidationResult
 
+try:
+    from utils.algorithm_search import search_latest_algorithms
+except ImportError:
+    from backend.utils.algorithm_search import search_latest_algorithms
+
 
 @dataclass
 class AlgorithmRequest:
@@ -26,6 +31,7 @@ class AlgorithmRequest:
     algorithm_type: str  # 'path_planning', 'obstacle_avoidance', 'inverse_kinematics', 'computer_vision'
     current_code: Optional[str] = None  # For modifications
     modification_request: Optional[str] = None  # "Make it faster", "Add safety margin", etc.
+    use_web_search: bool = False  # Whether to search for latest research (2024-2025)
 
 
 @dataclass
@@ -155,8 +161,32 @@ function processVision(
         Returns:
             AlgorithmResponse with generated code and metadata
         """
+        # Search for latest research if requested
+        research_context = ""
+        if request.use_web_search:
+            print(f"🔍 Searching for latest {request.algorithm_type} research...")
+            search_results = search_latest_algorithms(
+                task=request.description,
+                robot_type=request.robot_type,
+                use_web_search=True
+            )
+
+            if search_results and search_results.get('papers'):
+                research_context = "\n\n--- Latest Research (2024-2025) ---\n"
+                for paper in search_results['papers']:
+                    research_context += f"\n• {paper['title']}\n  {paper['summary']}\n  Source: {paper['url']}\n"
+
+                if search_results.get('techniques'):
+                    research_context += "\nRelevant Techniques:\n"
+                    for tech in search_results['techniques']:
+                        research_context += f"• {tech['name']}\n"
+
+                print(f"✅ Found {len(search_results['papers'])} recent papers")
+            else:
+                print(f"⚠️ No recent research found, using classical algorithms")
+
         # Build prompt for Qwen
-        prompt = self._build_prompt(request)
+        prompt = self._build_prompt(request, research_context)
 
         # Generate code using Qwen
         code = self._call_ollama(prompt)
@@ -242,7 +272,7 @@ Output ONLY the code, no explanations."""
             estimated_complexity=complexity
         )
 
-    def _build_prompt(self, request: AlgorithmRequest) -> str:
+    def _build_prompt(self, request: AlgorithmRequest, research_context: str = "") -> str:
         """Build Qwen prompt for algorithm generation"""
 
         # Get template for this algorithm type
@@ -275,6 +305,7 @@ Task: {request.description}
 
 Template Structure:
 {template}
+{research_context}
 
 Requirements:
 1. Generate PRODUCTION-READY TypeScript code
@@ -285,6 +316,7 @@ Requirements:
 6. Optimize for real-time performance (this runs in browser at 60 FPS)
 7. Use efficient data structures (typed arrays when possible)
 8. Follow the template structure
+{"9. If latest research papers are provided above, incorporate modern techniques where applicable" if research_context else ""}
 
 Algorithm Guidelines:
 - For path planning: Use A*, RRT, or Dijkstra based on the task

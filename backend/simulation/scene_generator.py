@@ -17,13 +17,14 @@ class SceneGenerator:
         """
 
         robot_type = requirements.get('robot_type', 'mobile')
+        robot_dof = requirements.get('robot_dof', None)
         environment = requirements.get('environment', 'warehouse')
         task = requirements.get('task', 'navigate')
         objects_list = requirements.get('objects', ['boxes'])
 
         scene_config = {
             "environment": self._create_environment(environment),
-            "robot": self._create_robot(robot_type, task),
+            "robot": self._create_robot(robot_type, task, robot_dof),
             "objects": [],
             "lighting": self._create_lighting(environment),
             "camera": {
@@ -33,11 +34,20 @@ class SceneGenerator:
             }
         }
 
-        # Add objects based on requirements
-        for obj_type in objects_list:
+        # Check if we have task-specific objects
+        task_objects = requirements.get('task_objects', [])
+
+        if task_objects:
+            # Create task-specific objects with exact colors and counts
             scene_config['objects'].extend(
-                self._create_objects(obj_type, environment)
+                self._create_task_objects(task_objects, environment)
             )
+        else:
+            # Add objects based on requirements (old behavior)
+            for obj_type in objects_list:
+                scene_config['objects'].extend(
+                    self._create_objects(obj_type, environment)
+                )
 
         # Add task-specific elements
         if 'pick' in task.lower():
@@ -100,8 +110,28 @@ class SceneGenerator:
 
         return environments.get(env_type, environments["warehouse"])
 
-    def _create_robot(self, robot_type: str, task: str) -> Dict:
+    def _create_robot(self, robot_type: str, task: str, robot_dof: int = None) -> Dict:
         """Create robot configuration"""
+
+        # For arm robots, use custom DOF if provided
+        if robot_type == "arm" and robot_dof:
+            # Generate segments based on DOF
+            segments = []
+            segment_colors = ["#FF6347", "#FF7F50", "#FFA07A", "#FFB6C1", "#FF69B4", "#FF1493"]
+            for i in range(robot_dof):
+                segments.append({
+                    "length": 0.5 - (i * 0.05),  # Decreasing length
+                    "color": segment_colors[i % len(segment_colors)]
+                })
+
+            arm_config = {
+                "type": "robotic_arm",
+                "dof": robot_dof,
+                "segments": segments,
+                "base_position": [0, 0, 0],
+                "end_effector": "gripper"
+            }
+            return arm_config
 
         robots = {
             "mobile": {
@@ -176,7 +206,7 @@ class SceneGenerator:
         else:
             return []
 
-    def _create_boxes(self, count: int) -> List[Dict]:
+    def _create_boxes(self, count: int, color: str = None) -> List[Dict]:
         """Generate box objects"""
         boxes = []
         for i in range(count):
@@ -186,7 +216,7 @@ class SceneGenerator:
                 "id": f"box_{i}",
                 "position": position,
                 "size": [0.3, 0.3, 0.3],
-                "color": self._random_box_color(),
+                "color": color if color else self._random_box_color(),
                 "physics": {
                     "mass": 1.0,
                     "friction": 0.5,
@@ -195,6 +225,113 @@ class SceneGenerator:
                 "interactive": True
             })
         return boxes
+
+    def _create_task_objects(self, task_objects: List[Dict], environment: str) -> List[Dict]:
+        """Create objects based on task specifications with exact colors and counts"""
+        all_objects = []
+        object_counter = 0
+
+        # Position objects in a cluster near the robot for easy reach
+        # Y = 0.15 (half of cube height 0.3) so cubes rest ON ground, not IN it
+        cluster_positions = [
+            [2, 0.15, 2], [2, 0.15, -2], [-2, 0.15, 2], [-2, 0.15, -2],
+            [3, 0.15, 0], [0, 0.15, 3], [-3, 0.15, 0], [0, 0.15, -3],
+            [2.5, 0.15, 2.5], [2.5, 0.15, -2.5], [-2.5, 0.15, 2.5], [-2.5, 0.15, -2.5]
+        ]
+
+        position_index = 0
+
+        for obj_spec in task_objects:
+            obj_type = obj_spec.get('type', 'box')
+            color_spec = obj_spec.get('color', 'mixed')
+            count = obj_spec.get('count', 1)
+            role = obj_spec.get('role', 'distractor')
+
+            # Handle None count by defaulting to 1
+            if count is None or not isinstance(count, int):
+                count = 1
+
+            for i in range(count):
+                # Get position from cluster
+                if position_index < len(cluster_positions):
+                    position = cluster_positions[position_index].copy()
+                    position_index += 1
+                else:
+                    position = self._random_position(min_dist=2)
+
+                # Determine color
+                if color_spec == 'mixed' or color_spec is None:
+                    # For mixed colors or None, use different bright colors for EACH object
+                    # Use object_counter to ensure unique colors across all mixed objects
+                    color = self._get_task_color(object_counter)
+                else:
+                    # Use specified color
+                    color = self._color_name_to_hex(color_spec)
+
+                # Create object based on type
+                obj = {
+                    "type": obj_type,
+                    "id": f"{obj_type}_{object_counter}",
+                    "position": position,
+                    "size": [0.3, 0.3, 0.3],
+                    "color": color,
+                    "physics": {
+                        "mass": 1.0,
+                        "friction": 0.5,
+                        "restitution": 0.3
+                    },
+                    "interactive": True,
+                    "role": role  # Mark as target or distractor for algorithms
+                }
+
+                all_objects.append(obj)
+                object_counter += 1
+
+        return all_objects
+
+    def _get_task_color(self, index: int) -> str:
+        """Get bright, distinct colors for task objects"""
+        task_colors = [
+            "#FF0000",  # Red
+            "#0000FF",  # Blue
+            "#00FF00",  # Green
+            "#FFFF00",  # Yellow
+            "#FF8800",  # Orange
+            "#FF00FF",  # Magenta
+            "#00FFFF",  # Cyan
+            "#8B00FF",  # Purple
+            "#FF1493",  # Deep Pink
+            "#32CD32",  # Lime Green
+            "#FFD700",  # Gold
+            "#00CED1"   # Dark Turquoise
+        ]
+        return task_colors[index % len(task_colors)]
+
+    def _color_name_to_hex(self, color_name: str) -> str:
+        """Convert color name to hex code"""
+        color_map = {
+            "red": "#FF0000",
+            "blue": "#0000FF",
+            "green": "#00FF00",
+            "yellow": "#FFFF00",
+            "orange": "#FF8800",
+            "purple": "#8B00FF",
+            "magenta": "#FF00FF",
+            "cyan": "#00FFFF",
+            "pink": "#FF1493",
+            "lime": "#32CD32",
+            "gold": "#FFD700",
+            "turquoise": "#00CED1",
+            "brown": "#8B4513",
+            "white": "#FFFFFF",
+            "black": "#000000",
+            "gray": "#808080",
+            "grey": "#808080"
+        }
+        # Handle None color_name by returning default color
+        if color_name is None:
+            return "#FF0000"  # Default to red
+        return color_map.get(color_name.lower(), "#FF0000")  # Default to red if unknown
 
     def _create_obstacles(self, count: int) -> List[Dict]:
         """Generate obstacle objects (cylinders and boxes)"""
@@ -334,7 +471,8 @@ class SceneGenerator:
 
             # Avoid placing too close to center (robot start position)
             if abs(x) > min_dist or abs(z) > min_dist:
-                return [x, 0, z]
+                # Y = 0.15 (half of cube height) for ground contact
+                return [x, 0.15, z]
 
     def _random_box_color(self) -> str:
         """Get random box color from common warehouse colors"""

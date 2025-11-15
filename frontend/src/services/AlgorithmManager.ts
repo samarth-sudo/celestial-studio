@@ -7,6 +7,7 @@
 
 import * as THREE from 'three'
 import axios from 'axios'
+import config from '../config'
 
 export interface Algorithm {
   id: string
@@ -22,7 +23,7 @@ export interface Algorithm {
 export interface AlgorithmParameter {
   name: string
   type: 'number' | 'boolean' | 'string'
-  value: any
+  value: string | number | boolean
   min?: number
   max?: number
   step?: number
@@ -33,7 +34,7 @@ export interface AlgorithmState {
   position: THREE.Vector3
   velocity: THREE.Vector3
   rotation: THREE.Euler
-  customData: Record<string, any>
+  customData: Record<string, unknown>
 }
 
 /**
@@ -43,7 +44,7 @@ export class AlgorithmManager {
   private algorithms: Map<string, Algorithm> = new Map()
   private activeAlgorithms: Map<string, string> = new Map() // robotId -> algorithmId
   private robotStates: Map<string, AlgorithmState> = new Map()
-  private readonly API_URL = 'http://localhost:8000'
+  private readonly API_URL = config.backendUrl
 
   /**
    * Generate a new algorithm from natural language description
@@ -51,7 +52,8 @@ export class AlgorithmManager {
   async generateAlgorithm(
     description: string,
     robotType: 'mobile' | 'arm' | 'drone',
-    algorithmType: Algorithm['type']
+    algorithmType: Algorithm['type'],
+    userId?: string
   ): Promise<Algorithm> {
     try {
       console.log(`🔄 Generating ${algorithmType} algorithm...`)
@@ -90,34 +92,42 @@ export class AlgorithmManager {
       // Store algorithm
       this.algorithms.set(algorithm.id, algorithm)
 
+      // Store in conversation context for export
+      if (userId) {
+        await this.storeAlgorithmInContext(userId, algorithm)
+      }
+
       console.log(`✅ Generated algorithm: ${algorithm.name}`)
       console.log(`Code length: ${code.length} chars`)
       console.log(`Parameters: ${parameters?.length || 0}`)
       console.log(`Compiled: ${compiledFunction ? 'Yes' : 'No (display only)'}`)
       return algorithm
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('❌ Algorithm generation failed:', error)
-      console.error('Error details:', {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status,
-        config: {
-          url: error.config?.url,
-          method: error.config?.method,
-          data: error.config?.data
-        }
-      })
 
-      if (error.code === 'ECONNABORTED') {
-        throw new Error('Request timed out. Algorithm generation takes 10-20 seconds, please wait...')
-      } else if (error.response) {
-        throw new Error(`Server error: ${error.response.data?.detail || error.response.statusText}`)
-      } else if (error.request) {
-        throw new Error('No response from server. Is the backend running on port 8000?')
-      } else {
-        throw new Error(`Failed to generate algorithm: ${error.message}`)
+      if (axios.isAxiosError(error)) {
+        console.error('Error details:', {
+          message: error.message,
+          response: error.response?.data,
+          status: error.response?.status,
+          config: {
+            url: error.config?.url,
+            method: error.config?.method,
+            data: error.config?.data
+          }
+        })
+
+        if (error.code === 'ECONNABORTED') {
+          throw new Error('Request timed out. Algorithm generation takes 10-20 seconds, please wait...')
+        } else if (error.response) {
+          throw new Error(`Server error: ${error.response.data?.detail || error.response.statusText}`)
+        } else if (error.request) {
+          throw new Error('No response from server. Is the backend running on port 8000?')
+        }
       }
+
+      throw new Error(`Failed to generate algorithm: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -195,7 +205,7 @@ export class AlgorithmManager {
   /**
    * Update algorithm parameter value (live tuning)
    */
-  updateParameter(algorithmId: string, paramName: string, value: any): void {
+  updateParameter(algorithmId: string, paramName: string, value: string | number | boolean): void {
     const algorithm = this.algorithms.get(algorithmId)
     if (!algorithm) {
       throw new Error(`Algorithm ${algorithmId} not found`)
@@ -222,8 +232,8 @@ export class AlgorithmManager {
   executeAlgorithm(
     algorithmId: string,
     functionName: string,
-    ...args: any[]
-  ): any {
+    ...args: unknown[]
+  ): unknown {
     const algorithm = this.algorithms.get(algorithmId)
     if (!algorithm || !algorithm.compiledFunction) {
       throw new Error(`Algorithm ${algorithmId} not compiled`)
@@ -272,16 +282,16 @@ export class AlgorithmManager {
           if (Array.isArray(result) && result.length > 0) {
             return result
           }
-        } catch (e) {
+        } catch {
           // Try next function name
           continue
         }
       }
 
       throw new Error('No valid path planning function found in algorithm')
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error(`❌ Path planning execution error:`, error)
-      throw new Error(`Failed to execute path planning: ${error.message}`)
+      throw new Error(`Failed to execute path planning: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -342,22 +352,36 @@ export class AlgorithmManager {
         .replace(/interface\s+\w+\s*\{[^}]*\}/g, '') // Remove interfaces
         .replace(/type\s+\w+\s*=\s*[^;]+;/g, '') // Remove type aliases
 
-      // Wrap code in a function that returns an executor
+      // Wrap code in a function that collects all declared functions
       const wrappedCode = `
         ${jsCode}
 
-        // Return executor function
-        return function(functionName, ...args) {
-          // Find and execute the requested function
+        // Collect all functions into a safe registry
+        const functionRegistry = {};
+
+        // Use this pattern to safely extract function names without eval
+        const functionPattern = /function\\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\\s*\\(/g;
+        const codeStr = ${JSON.stringify(jsCode)};
+        let match;
+
+        while ((match = functionPattern.exec(codeStr)) !== null) {
+          const fnName = match[1];
           try {
-            if (typeof eval(functionName) === 'function') {
-              return eval(functionName)(...args)
+            // Use indirect evaluation through this context
+            if (typeof this[fnName] === 'function') {
+              functionRegistry[fnName] = this[fnName];
             }
-            throw new Error('Function ' + functionName + ' not found')
           } catch (e) {
-            console.error('Execution error:', e)
-            throw e
+            // Function might not be accessible, skip it
           }
+        }
+
+        // Return executor function with safe function registry
+        return function(functionName, ...args) {
+          if (functionRegistry[functionName] && typeof functionRegistry[functionName] === 'function') {
+            return functionRegistry[functionName](...args);
+          }
+          throw new Error('Function ' + functionName + ' not found in registry');
         }
       `
 
@@ -365,10 +389,10 @@ export class AlgorithmManager {
       const compiledFn = new Function('THREE', wrappedCode)
 
       // Execute with THREE.js injected
-      return compiledFn(THREE)
+      return compiledFn.call(global || window || {}, THREE)
 
-    } catch (error: any) {
-      console.warn('⚠️ Code compilation skipped (will work for display only):', error.message)
+    } catch (error: unknown) {
+      console.warn('⚠️ Code compilation skipped (will work for display only):', error instanceof Error ? error.message : String(error))
       console.log('Code preview:', code.substring(0, 200) + '...')
       // Return null instead of throwing - algorithm can still be stored and displayed
       return null
@@ -416,6 +440,34 @@ export class AlgorithmManager {
    */
   private generateId(): string {
     return `algo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+  }
+
+  /**
+   * Store algorithm in conversation context for export
+   */
+  private async storeAlgorithmInContext(userId: string, algorithm: Algorithm): Promise<void> {
+    try {
+      // Prepare algorithm data for storage (exclude compiled function)
+      const algorithmData = {
+        id: algorithm.id,
+        name: algorithm.name,
+        type: algorithm.type,
+        code: algorithm.code,
+        parameters: algorithm.parameters,
+        complexity: algorithm.complexity,
+        description: algorithm.description
+      }
+
+      await axios.post(`${this.API_URL}/api/chat/store-algorithm`, {
+        userId,
+        algorithm: algorithmData
+      })
+
+      console.log(`📝 Stored algorithm in conversation context for user ${userId}`)
+    } catch (error) {
+      console.warn('Failed to store algorithm in context:', error)
+      // Non-critical error, don't throw
+    }
   }
 }
 

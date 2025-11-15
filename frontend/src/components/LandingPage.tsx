@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import './LandingPage.css'
 
 interface LandingPageProps {
@@ -11,11 +11,23 @@ const EXAMPLE_PROMPTS = [
   "Make a drone for outdoor inspection"
 ]
 
+const REVOLVING_WORDS = ['Chat','Simulate','Build']
+
 export default function LandingPage({ onStart }: LandingPageProps) {
   const [input, setInput] = useState('')
   const [showSplitView, setShowSplitView] = useState(false)
   const [leftPanelWidth, setLeftPanelWidth] = useState(50) // percentage
   const [isDragging, setIsDragging] = useState(false)
+  const [currentWordIndex, setCurrentWordIndex] = useState(0)
+
+  // Revolving text animation
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentWordIndex((prev) => (prev + 1) % REVOLVING_WORDS.length)
+    }, 2000) // Change word every 2 seconds
+
+    return () => clearInterval(interval)
+  }, [])
 
   const handleMouseDown = () => {
     setIsDragging(true)
@@ -59,7 +71,9 @@ export default function LandingPage({ onStart }: LandingPageProps) {
       <div className="landing-page">
         <div className="landing-hero">
           <div className="hero-content">
-            <h1 className="hero-headline">Simulation with Ai</h1>
+            <h1 className="hero-headline">
+              <span className="revolving-word">{REVOLVING_WORDS[currentWordIndex]}</span> with AI
+            </h1>
             <form onSubmit={handleSubmit} className="hero-form">
               <div className="input-container">
                 <input
@@ -101,8 +115,7 @@ export default function LandingPage({ onStart }: LandingPageProps) {
         >
           <div className="panel-header">
             <div className="header-text">
-              <h2>Simulation Generator</h2>
-              <p>Describe your robot simulation in natural language</p>
+              <h2>Celestial Studio</h2>
             </div>
           </div>
 
