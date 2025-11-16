@@ -42,7 +42,7 @@ export interface AlgorithmState {
  */
 export class AlgorithmManager {
   private algorithms: Map<string, Algorithm> = new Map()
-  private activeAlgorithms: Map<string, string> = new Map() // robotId -> algorithmId
+  private activeAlgorithms: Map<string, Set<string>> = new Map() // robotId -> Set of algorithmIds
   private robotStates: Map<string, AlgorithmState> = new Map()
   private readonly API_URL = config.backendUrl
 
@@ -176,7 +176,7 @@ export class AlgorithmManager {
   }
 
   /**
-   * Apply algorithm to a robot (hot-swap)
+   * Apply algorithm to a robot (adds to active algorithms)
    */
   applyAlgorithm(robotId: string, algorithmId: string): void {
     const algorithm = this.algorithms.get(algorithmId)
@@ -184,22 +184,76 @@ export class AlgorithmManager {
       throw new Error(`Algorithm ${algorithmId} not found`)
     }
 
-    // Save current robot state before swapping
-    // (State preservation will be handled by robot component)
+    // Get or create active algorithms set for this robot
+    if (!this.activeAlgorithms.has(robotId)) {
+      this.activeAlgorithms.set(robotId, new Set<string>())
+    }
 
-    // Activate algorithm for robot
-    this.activeAlgorithms.set(robotId, algorithmId)
+    // Add algorithm to active set
+    this.activeAlgorithms.get(robotId)!.add(algorithmId)
 
     console.log(`🔄 Applied algorithm ${algorithm.name} to robot ${robotId}`)
+    console.log(`   Total active algorithms: ${this.activeAlgorithms.get(robotId)!.size}`)
   }
 
   /**
-   * Get active algorithm for a robot
+   * Remove algorithm from a robot
+   */
+  removeAlgorithm(robotId: string, algorithmId: string): void {
+    const activeSet = this.activeAlgorithms.get(robotId)
+    if (!activeSet) {
+      console.warn(`No active algorithms for robot ${robotId}`)
+      return
+    }
+
+    const removed = activeSet.delete(algorithmId)
+    if (removed) {
+      const algorithm = this.algorithms.get(algorithmId)
+      console.log(`🗑️ Removed algorithm ${algorithm?.name || algorithmId} from robot ${robotId}`)
+      console.log(`   Remaining active algorithms: ${activeSet.size}`)
+    }
+
+    // Clean up empty sets
+    if (activeSet.size === 0) {
+      this.activeAlgorithms.delete(robotId)
+    }
+  }
+
+  /**
+   * Get active algorithm for a robot (returns first one for backwards compatibility)
    */
   getActiveAlgorithm(robotId: string): Algorithm | null {
-    const algorithmId = this.activeAlgorithms.get(robotId)
-    if (!algorithmId) return null
-    return this.algorithms.get(algorithmId) || null
+    const activeSet = this.activeAlgorithms.get(robotId)
+    if (!activeSet || activeSet.size === 0) return null
+
+    const firstId = Array.from(activeSet)[0]
+    return this.algorithms.get(firstId) || null
+  }
+
+  /**
+   * Get all active algorithms for a robot
+   */
+  getActiveAlgorithms(robotId: string): Algorithm[] {
+    const activeSet = this.activeAlgorithms.get(robotId)
+    if (!activeSet || activeSet.size === 0) return []
+
+    return Array.from(activeSet)
+      .map(id => this.algorithms.get(id))
+      .filter((algo): algo is Algorithm => algo !== undefined)
+  }
+
+  /**
+   * Get active algorithms of a specific type for a robot
+   */
+  getAlgorithmsByType(robotId: string, type: Algorithm['type']): Algorithm[] {
+    return this.getActiveAlgorithms(robotId).filter(algo => algo.type === type)
+  }
+
+  /**
+   * Check if robot has an active algorithm of a specific type
+   */
+  hasAlgorithmType(robotId: string, type: Algorithm['type']): boolean {
+    return this.getAlgorithmsByType(robotId, type).length > 0
   }
 
   /**

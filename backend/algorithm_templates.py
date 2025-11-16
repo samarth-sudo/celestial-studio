@@ -195,6 +195,278 @@ function findPathRRT(
 
 export { findPathRRT }
 """,
+            "longest_path": """
+// Longest Path Planning Algorithm
+// Maximizes path length while avoiding cycles and still reaching the goal
+// Use case: Scenic routes, surveillance coverage, exploration
+// Time Complexity: O(V * E) where V=vertices, E=edges
+
+import * as THREE from 'three'
+
+interface PathPoint {
+  x: number
+  z: number
+}
+
+const GRID_RESOLUTION = 0.5  // meters
+const EXPLORATION_FACTOR = 2.5  // Higher = more exploration
+const SAFETY_MARGIN = 0.3  // meters around obstacles
+
+function findLongestPath(
+  start: PathPoint,
+  goal: PathPoint,
+  obstacles: Array<{ position: PathPoint, radius: number }>
+): PathPoint[] {
+  // Create grid-based graph
+  const bounds = calculateBounds(start, goal, obstacles)
+  const grid = createGrid(bounds, GRID_RESOLUTION)
+
+  // Mark obstacle cells
+  markObstacles(grid, obstacles, SAFETY_MARGIN)
+
+  // Find longest path using inverted heuristic
+  const path = longestPathSearch(grid, start, goal)
+
+  // Add scenic waypoints between path segments
+  const scenicPath = addScenicWaypoints(path, obstacles)
+
+  return scenicPath
+}
+
+function calculateBounds(
+  start: PathPoint,
+  goal: PathPoint,
+  obstacles: Array<{ position: PathPoint, radius: number }>
+): { minX: number, maxX: number, minZ: number, maxZ: number } {
+  let minX = Math.min(start.x, goal.x)
+  let maxX = Math.max(start.x, goal.x)
+  let minZ = Math.min(start.z, goal.z)
+  let maxZ = Math.max(start.z, goal.z)
+
+  // Expand bounds to include obstacles
+  obstacles.forEach(obs => {
+    minX = Math.min(minX, obs.position.x - obs.radius - 5)
+    maxX = Math.max(maxX, obs.position.x + obs.radius + 5)
+    minZ = Math.min(minZ, obs.position.z - obs.radius - 5)
+    maxZ = Math.max(maxZ, obs.position.z + obs.radius + 5)
+  })
+
+  return { minX, maxX, minZ, maxZ }
+}
+
+function createGrid(bounds: any, resolution: number): Map<string, boolean> {
+  const grid = new Map<string, boolean>()
+
+  for (let x = bounds.minX; x <= bounds.maxX; x += resolution) {
+    for (let z = bounds.minZ; z <= bounds.maxZ; z += resolution) {
+      const key = `${Math.round(x / resolution)},${Math.round(z / resolution)}`
+      grid.set(key, true)  // true = walkable
+    }
+  }
+
+  return grid
+}
+
+function markObstacles(
+  grid: Map<string, boolean>,
+  obstacles: Array<{ position: PathPoint, radius: number }>,
+  safetyMargin: number
+): void {
+  grid.forEach((walkable, key) => {
+    const [x, z] = key.split(',').map(Number)
+    const worldX = x * GRID_RESOLUTION
+    const worldZ = z * GRID_RESOLUTION
+
+    for (const obs of obstacles) {
+      const dist = Math.sqrt(
+        Math.pow(worldX - obs.position.x, 2) +
+        Math.pow(worldZ - obs.position.z, 2)
+      )
+
+      if (dist < obs.radius + safetyMargin) {
+        grid.set(key, false)  // not walkable
+        break
+      }
+    }
+  })
+}
+
+function longestPathSearch(
+  grid: Map<string, boolean>,
+  start: PathPoint,
+  goal: PathPoint
+): PathPoint[] {
+  const startKey = toGridKey(start)
+  const goalKey = toGridKey(goal)
+
+  // Use modified A* with inverted heuristic (prefer farther nodes)
+  const openSet = new Set<string>([startKey])
+  const cameFrom = new Map<string, string>()
+  const gScore = new Map<string, number>()
+  const fScore = new Map<string, number>()
+
+  gScore.set(startKey, 0)
+  fScore.set(startKey, -invertedHeuristic(start, goal))  // Negative to maximize
+
+  const visited = new Set<string>()
+
+  while (openSet.size > 0) {
+    // Find node with highest fScore (longest distance)
+    let current = ''
+    let maxScore = -Infinity
+
+    openSet.forEach(node => {
+      const score = fScore.get(node) || -Infinity
+      if (score > maxScore) {
+        maxScore = score
+        current = node
+      }
+    })
+
+    if (current === goalKey) {
+      return reconstructPath(cameFrom, current)
+    }
+
+    openSet.delete(current)
+    visited.add(current)
+
+    // Get neighbors
+    const neighbors = getNeighbors(current, grid)
+
+    for (const neighbor of neighbors) {
+      if (visited.has(neighbor)) continue
+
+      const tentativeGScore = (gScore.get(current) || 0) + 1
+
+      if (!gScore.has(neighbor) || tentativeGScore < gScore.get(neighbor)!) {
+        cameFrom.set(neighbor, current)
+        gScore.set(neighbor, tentativeGScore)
+
+        const neighborPoint = fromGridKey(neighbor)
+        const h = -invertedHeuristic(neighborPoint, goal) * EXPLORATION_FACTOR
+        fScore.set(neighbor, tentativeGScore + h)
+
+        if (!openSet.has(neighbor)) {
+          openSet.add(neighbor)
+        }
+      }
+    }
+  }
+
+  // Fallback: direct path if no scenic path found
+  return [start, goal]
+}
+
+function invertedHeuristic(from: PathPoint, to: PathPoint): number {
+  // Prefer points FARTHER from goal (inverted heuristic)
+  const dist = Math.sqrt(
+    Math.pow(to.x - from.x, 2) +
+    Math.pow(to.z - from.z, 2)
+  )
+  return -dist  // Negative distance to maximize
+}
+
+function getNeighbors(key: string, grid: Map<string, boolean>): string[] {
+  const [x, z] = key.split(',').map(Number)
+  const neighbors: string[] = []
+
+  // 8-directional movement
+  const directions = [
+    [-1, 0], [1, 0], [0, -1], [0, 1],  // Cardinal
+    [-1, -1], [-1, 1], [1, -1], [1, 1]  // Diagonal
+  ]
+
+  for (const [dx, dz] of directions) {
+    const neighborKey = `${x + dx},${z + dz}`
+    if (grid.get(neighborKey) === true) {
+      neighbors.push(neighborKey)
+    }
+  }
+
+  return neighbors
+}
+
+function reconstructPath(cameFrom: Map<string, string>, current: string): PathPoint[] {
+  const path = [fromGridKey(current)]
+
+  while (cameFrom.has(current)) {
+    current = cameFrom.get(current)!
+    path.unshift(fromGridKey(current))
+  }
+
+  return path
+}
+
+function addScenicWaypoints(
+  path: PathPoint[],
+  obstacles: Array<{ position: PathPoint, radius: number }>
+): PathPoint[] {
+  if (path.length < 2) return path
+
+  const scenicPath: PathPoint[] = [path[0]]
+
+  for (let i = 1; i < path.length; i++) {
+    const prev = path[i - 1]
+    const curr = path[i]
+
+    // Add intermediate waypoint perpendicular to direct line
+    const dist = Math.sqrt(
+      Math.pow(curr.x - prev.x, 2) +
+      Math.pow(curr.z - prev.z, 2)
+    )
+
+    if (dist > 2.0) {  // Only for long segments
+      const mid = {
+        x: (prev.x + curr.x) / 2,
+        z: (prev.z + curr.z) / 2
+      }
+
+      // Offset perpendicular to direct line
+      const dx = curr.x - prev.x
+      const dz = curr.z - prev.z
+      const perpX = -dz / dist
+      const perpZ = dx / dist
+
+      const offset = 1.5  // meters
+      const scenic = {
+        x: mid.x + perpX * offset,
+        z: mid.z + perpZ * offset
+      }
+
+      // Check if scenic waypoint is safe
+      const isSafe = obstacles.every(obs => {
+        const d = Math.sqrt(
+          Math.pow(scenic.x - obs.position.x, 2) +
+          Math.pow(scenic.z - obs.position.z, 2)
+        )
+        return d > obs.radius + SAFETY_MARGIN
+      })
+
+      if (isSafe) {
+        scenicPath.push(scenic)
+      }
+    }
+
+    scenicPath.push(curr)
+  }
+
+  return scenicPath
+}
+
+function toGridKey(point: PathPoint): string {
+  return `${Math.round(point.x / GRID_RESOLUTION)},${Math.round(point.z / GRID_RESOLUTION)}`
+}
+
+function fromGridKey(key: string): PathPoint {
+  const [x, z] = key.split(',').map(Number)
+  return {
+    x: x * GRID_RESOLUTION,
+    z: z * GRID_RESOLUTION
+  }
+}
+
+export { findLongestPath }
+""",
         }
 
     @staticmethod

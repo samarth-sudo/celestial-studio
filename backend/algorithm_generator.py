@@ -31,7 +31,7 @@ class AlgorithmRequest:
     algorithm_type: str  # 'path_planning', 'obstacle_avoidance', 'inverse_kinematics', 'computer_vision'
     current_code: Optional[str] = None  # For modifications
     modification_request: Optional[str] = None  # "Make it faster", "Add safety margin", etc.
-    use_web_search: bool = False  # Whether to search for latest research (2024-2025)
+    use_web_search: bool = True  # Whether to search for latest research (2024-2025)
 
 
 @dataclass
@@ -48,7 +48,7 @@ class AlgorithmGenerator:
     """Generates algorithm code using Qwen 2.5 Coder"""
 
     OLLAMA_URL = "http://localhost:11434/api/generate"
-    OLLAMA_MODEL = "qwen2.5-coder:7b"
+    OLLAMA_MODEL = "qwen2.5-coder-robotics"  # Specialized robotics model with improved accuracy
 
     def __init__(self):
         """Initialize the algorithm generator"""
@@ -319,7 +319,9 @@ Requirements:
 {"9. If latest research papers are provided above, incorporate modern techniques where applicable" if research_context else ""}
 
 Algorithm Guidelines:
-- For path planning: Use A*, RRT, or Dijkstra based on the task
+- For path planning: Use A*, RRT, Dijkstra (shortest path), or Longest Path variant based on the task
+  * Shortest path: A*, Dijkstra, RRT for optimal/fast routes
+  * Longest path: Inverted heuristic, maximize distance, avoid cycles, scenic routes
 - For obstacle avoidance: Use DWA, APF, or VFH based on the task
 - For inverse kinematics: Use FABRIK, CCD, or Jacobian based on the task
 - For computer vision: Choose appropriate algorithm:

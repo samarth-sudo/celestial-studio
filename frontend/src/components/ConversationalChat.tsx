@@ -118,6 +118,14 @@ export default function ConversationalChat({ onSimulationGenerated, userId, init
             console.log('🚀 Calling onSimulationGenerated with adapted config')
             onSimulationGenerated(adaptedConfig)
             console.log('✅ Simulation generation callback completed')
+
+            // Sync the scene with backend conversation context
+            console.log('🔄 Syncing scene with backend context')
+            await axios.post(`${config.backendUrl}/api/chat/sync-scene`, {
+              userId,
+              sceneConfig: data.simulation
+            })
+            console.log('✅ Scene synced with backend context')
           } catch (adaptError) {
             console.error('❌ Error in simulation adaptation/generation:', adaptError)
             if (adaptError instanceof Error) {

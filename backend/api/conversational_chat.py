@@ -797,7 +797,9 @@ Example: "Create a mobile robot in a warehouse for navigation" """
 
         # Determine algorithm type based on keywords
         algorithm_type = None
-        if any(word in message_lower for word in ['path', 'navigate', 'travel', 'route', 'waypoint']):
+        if any(word in message_lower for word in ['path', 'navigate', 'travel', 'route', 'waypoint',
+                                                    'longest', 'maximum path', 'scenic', 'exploration',
+                                                    'coverage', 'furthest', 'maximize distance', 'explore area']):
             algorithm_type = 'path_planning'
             algorithm_name = 'Path Planning'
         elif any(word in message_lower for word in ['obstacle', 'avoid', 'collision']):
@@ -1089,3 +1091,70 @@ async def store_algorithm(data: AlgorithmData):
         "status": "success",
         "algorithm_count": len(context.algorithms)
     }
+
+
+class SyncSceneRequest(BaseModel):
+    userId: str
+    sceneConfig: Dict[str, Any]
+
+
+@router.post("/api/chat/sync-scene")
+async def sync_scene(request: SyncSceneRequest):
+    """
+    Sync manually created scene from Scene Editor with conversation context
+    This allows users to create scenes manually and then generate algorithms for them
+    """
+    user_id = request.userId
+    scene_config = request.sceneConfig
+
+    try:
+        # Get or create conversation context
+        if user_id not in active_conversations:
+            active_conversations[user_id] = ConversationContext()
+            print(f"🆕 Created new context for scene sync - user {user_id}")
+
+        context = active_conversations[user_id]
+
+        # Store the scene configuration
+        context.last_simulation = scene_config
+
+        # Extract requirements from scene config
+        robot_type = scene_config.get('robot', {}).get('type', 'mobile_robot')
+        environment = scene_config.get('environment', {}).get('floor', {}).get('texture', 'warehouse')
+
+        # Determine task based on objects in scene
+        task = "navigation"
+        if 'waypoints' in scene_config:
+            task = "navigation"
+        elif 'task_markers' in scene_config:
+            task = "pick and place"
+
+        # Update context requirements
+        context.requirements = {
+            'robot_type': robot_type,
+            'environment': environment,
+            'task': task,
+            'objects': ['boxes']  # Default, can be enhanced later
+        }
+
+        # Initialize algorithms list if not exists
+        if not hasattr(context, 'algorithms'):
+            context.algorithms = []
+
+        print(f"✅ Synced scene for user {user_id}")
+        print(f"   - Robot: {robot_type}")
+        print(f"   - Environment: {environment}")
+        print(f"   - Task: {task}")
+        print(f"   - Objects count: {len(scene_config.get('objects', []))}")
+
+        return {
+            "status": "success",
+            "message": "Scene synced with conversation context",
+            "context_id": id(context)
+        }
+
+    except Exception as e:
+        print(f"❌ Error syncing scene: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to sync scene: {str(e)}")

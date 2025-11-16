@@ -1,14 +1,24 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { SceneConfig } from './types'
 import LandingPage from './components/LandingPage'
 import ConversationalChat from './components/ConversationalChat'
 import Simulator from './components/Simulator'
+import CameraViewTest from './pages/CameraViewTest'
 import './App.css'
 
 function App() {
   const [showLanding, setShowLanding] = useState(true)
   const [initialPrompt, setInitialPrompt] = useState('')
   const [sceneConfig, setSceneConfig] = useState<SceneConfig | null>(null)
+  const [isTestMode, setIsTestMode] = useState(false)
+
+  // Check URL for test mode
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('test') === 'camera') {
+      setIsTestMode(true)
+    }
+  }, [])
 
   // Generate a unique user ID for conversational chat
   const userId = 'user-' + Math.random().toString(36).substr(2, 9)
@@ -21,6 +31,11 @@ function App() {
   const handleSimulationGenerated = (sceneConfig: SceneConfig) => {
     setSceneConfig(sceneConfig)
     console.log('🎬 Simulation generated:', sceneConfig)
+  }
+
+  // Render test mode
+  if (isTestMode) {
+    return <CameraViewTest />
   }
 
   if (showLanding) {

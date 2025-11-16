@@ -33,7 +33,7 @@ export default function AlgorithmControls({
   onTestInSandbox
 }: AlgorithmControlsProps) {
   const [algorithms, setAlgorithms] = useState<Algorithm[]>([])
-  const [activeAlgorithmId, setActiveAlgorithmId] = useState<string | null>(null)
+  const [activeAlgorithmIds, setActiveAlgorithmIds] = useState<Set<string>>(new Set())
   const [isGenerating, setIsGenerating] = useState(false)
   const [description, setDescription] = useState('')
   const [algorithmType, setAlgorithmType] = useState<Algorithm['type']>('path_planning')
@@ -48,11 +48,10 @@ export default function AlgorithmControls({
     const allAlgorithms = manager.getAllAlgorithms()
     setAlgorithms(allAlgorithms)
 
-    // Check if robot has active algorithm
-    const active = manager.getActiveAlgorithm(robotId)
-    if (active) {
-      setActiveAlgorithmId(active.id)
-    }
+    // Get all active algorithms for this robot
+    const activeAlgos = manager.getActiveAlgorithms(robotId)
+    const activeIds = new Set(activeAlgos.map(a => a.id))
+    setActiveAlgorithmIds(activeIds)
   }, [manager, robotId])
 
   useEffect(() => {

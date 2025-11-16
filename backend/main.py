@@ -39,6 +39,12 @@ try:
 except ImportError:
     from backend.api.conversational_chat import router as chat_router
 
+# Import vision analysis router
+try:
+    from api.vision_analysis import router as vision_router
+except ImportError:
+    from backend.api.vision_analysis import router as vision_router
+
 # Import robot API router
 # Temporarily disabled for startup
 # try:
@@ -81,6 +87,9 @@ app = FastAPI(title="Robotics Demo API")
 
 # Include conversational chat router
 app.include_router(chat_router)
+
+# Include vision analysis router
+app.include_router(vision_router)
 
 # Include multi-robot API router (temporarily disabled)
 # app.include_router(robot_router)

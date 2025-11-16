@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { Canvas, useThree } from '@react-three/fiber'
 import { OrbitControls, Grid, Environment } from '@react-three/drei'
 import { Physics, RigidBody } from '@react-three/rapier'
@@ -26,6 +26,21 @@ type SimulationMode = 'rapier' | 'isaac'
 interface SimulatorProps {
   sceneConfig?: any
   onSceneChange?: (sceneConfig: any) => void
+}
+
+// SceneExtractor component to capture Three.js scene reference
+interface SceneExtractorProps {
+  onSceneReady: (scene: THREE.Scene) => void
+}
+
+function SceneExtractor({ onSceneReady }: SceneExtractorProps) {
+  const { scene } = useThree()
+
+  useEffect(() => {
+    onSceneReady(scene)
+  }, [scene, onSceneReady])
+
+  return null
 }
 
 // ClickHandler component for proper 3D raycasting
@@ -98,6 +113,9 @@ export default function Simulator({ sceneConfig, onSceneChange }: SimulatorProps
   const [simulationSpeed, setSimulationSpeed] = useState(1)
   const [editableObjects, setEditableObjects] = useState<any[]>([])
   const [undoStack, setUndoStack] = useState<any[]>([])
+
+  // Three.js scene reference for CameraView
+  const [threeScene, setThreeScene] = useState<THREE.Scene | null>(null)
 
   // Path planning state
   const [computedPath, setComputedPath] = useState<ComputedPath | null>(null)
@@ -198,15 +216,35 @@ export default function Simulator({ sceneConfig, onSceneChange }: SimulatorProps
       let waypoints: THREE.Vector3[] = []
       let algorithmName = 'A*'
 
-      // Check which algorithm to use
-      if (activeAlgorithmId === 'builtin-astar') {
+      // Check which algorithm to use - prioritize custom path planning algorithms
+      const pathPlanningAlgos = manager.getAlgorithmsByType('robot-1', 'path_planning')
+
+      if (activeAlgorithmId === 'builtin-astar' && pathPlanningAlgos.length === 0) {
+        // Use built-in A* only if no custom path planning algorithms are active
         waypoints = pathPlanner.findPath(origin, destination)
         algorithmName = 'A* (Built-in)'
-      } else {
-        // Use custom generated algorithm
+      } else if (pathPlanningAlgos.length > 0) {
+        // Use the first active path planning algorithm
+        const algorithm = pathPlanningAlgos[0]
         try {
-          const algorithm = manager.getAlgorithm(activeAlgorithmId)
-          if (algorithm) {
+          algorithmName = algorithm.name
+          waypoints = manager.executePathPlanning(
+            algorithm.id,
+            origin,
+            destination,
+            obstacles
+          )
+          console.log(`✅ Custom algorithm "${algorithmName}" generated path`)
+        } catch (error: any) {
+          console.error(`❌ Custom algorithm failed, falling back to A*:`, error.message)
+          waypoints = pathPlanner.findPath(origin, destination)
+          algorithmName = 'A* (Fallback)'
+        }
+      } else {
+        // Fallback to built-in A* if activeAlgorithmId doesn't exist
+        const algorithm = manager.getAlgorithm(activeAlgorithmId)
+        if (algorithm && algorithm.type === 'path_planning') {
+          try {
             algorithmName = algorithm.name
             waypoints = manager.executePathPlanning(
               activeAlgorithmId,
@@ -215,11 +253,14 @@ export default function Simulator({ sceneConfig, onSceneChange }: SimulatorProps
               obstacles
             )
             console.log(`✅ Custom algorithm "${algorithmName}" generated path`)
+          } catch (error: any) {
+            console.error(`❌ Custom algorithm failed, falling back to A*:`, error.message)
+            waypoints = pathPlanner.findPath(origin, destination)
+            algorithmName = 'A* (Fallback)'
           }
-        } catch (error: any) {
-          console.error(`❌ Custom algorithm failed, falling back to A*:`, error.message)
+        } else {
           waypoints = pathPlanner.findPath(origin, destination)
-          algorithmName = 'A* (Fallback)'
+          algorithmName = 'A* (Built-in)'
         }
       }
 
@@ -331,6 +372,11 @@ export default function Simulator({ sceneConfig, onSceneChange }: SimulatorProps
   const handleSpeedChange = (speed: number) => {
     setSimulationSpeed(speed)
   }
+
+  // Callback for scene extraction
+  const handleSceneReady = useCallback((scene: THREE.Scene) => {
+    setThreeScene(scene)
+  }, [])
 
   return (
     <div className="simulator">
@@ -489,7 +535,7 @@ export default function Simulator({ sceneConfig, onSceneChange }: SimulatorProps
         </div>
       )}
 
-      {/* Camera View Window (FPV) */}
+      {/* Camera View Window (FPV with CV Detection) */}
       <CameraViewWindow
         isVisible={showCameraView}
         onClose={() => setShowCameraView(false)}
@@ -497,6 +543,7 @@ export default function Simulator({ sceneConfig, onSceneChange }: SimulatorProps
         robotRotation={robotRotation}
         sceneConfig={sceneConfig}
         editableObjects={editableObjects}
+        scene={threeScene}
       />
 
       {/* Object Palette Window */}
@@ -719,6 +766,8 @@ export default function Simulator({ sceneConfig, onSceneChange }: SimulatorProps
                     onWaypointUpdate={handleWaypointUpdate}
                     path={computedPath}
                     isPaused={!isPlaying}
+                    obstacles={extractPathPlanningElements().obstacles}
+                    robotId="robot-1"
                   />
                 )}
                 {sceneConfig.robot?.type === 'robotic_arm' && (
@@ -747,6 +796,9 @@ export default function Simulator({ sceneConfig, onSceneChange }: SimulatorProps
               showGrid={false}
             />
           </Physics>
+
+          {/* Extract scene reference for CameraView */}
+          <SceneExtractor onSceneReady={handleSceneReady} />
 
           {/* Click handler for adding objects */}
           <ClickHandler activeTool={activeTool} onAddObject={addObject} />

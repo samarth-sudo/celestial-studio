@@ -3,16 +3,27 @@ import { useFrame } from '@react-three/fiber'
 import { RigidBody, type RapierRigidBody } from '@react-three/rapier'
 import * as THREE from 'three'
 import type { ComputedPath } from '../../types/PathPlanning'
+import { getAlgorithmManager } from '../../services/AlgorithmManager'
 
 interface MobileRobotProps {
   onPositionUpdate?: (position: [number, number, number], rotation: [number, number, number]) => void
   onWaypointUpdate?: (currentWaypoint: number, totalWaypoints: number) => void
   path?: ComputedPath | null
   isPaused?: boolean
+  obstacles?: Array<{ position: THREE.Vector3; radius: number }>
+  robotId?: string
 }
 
-export default function MobileRobot({ onPositionUpdate, onWaypointUpdate, path, isPaused = false }: MobileRobotProps) {
+export default function MobileRobot({
+  onPositionUpdate,
+  onWaypointUpdate,
+  path,
+  isPaused = false,
+  obstacles = [],
+  robotId = 'robot-1'
+}: MobileRobotProps) {
   const bodyRef = useRef<RapierRigidBody>(null)
+  const manager = getAlgorithmManager()
 
   // Demo waypoints (used when no path is provided)
   const demoWaypoints = [
@@ -89,14 +100,57 @@ export default function MobileRobot({ onPositionUpdate, onWaypointUpdate, path, 
       // Reached waypoint, move to next
       setCurrentWaypoint((prev) => (prev + 1) % waypoints.length)
     } else {
-      // Move towards target
+      // Calculate base velocity towards target
       direction.normalize()
-      const velocity = direction.multiplyScalar(speed)
+      let velocity = direction.clone().multiplyScalar(speed)
+
+      // Apply obstacle avoidance if algorithm is active
+      const obstacleAvoidanceAlgos = manager.getAlgorithmsByType(robotId, 'obstacle_avoidance')
+      if (obstacleAvoidanceAlgos.length > 0 && obstacles.length > 0) {
+        try {
+          // Use the first active obstacle avoidance algorithm
+          const algo = obstacleAvoidanceAlgos[0]
+
+          // Create current velocity vector for algorithm
+          const currentVel = { x: velocity.x, z: velocity.z }
+          const currentPos = { x: position.x, z: position.z }
+          const goal = { x: target.x, z: target.z }
+
+          // Call obstacle avoidance algorithm
+          // Try common function names
+          const functionNames = ['calculateSafeVelocity', 'avoidObstacles', 'computeSafeVelocity']
+
+          for (const funcName of functionNames) {
+            try {
+              const result = manager.executeAlgorithm(
+                algo.id,
+                funcName,
+                currentPos,
+                currentVel,
+                obstacles,
+                goal,
+                speed
+              ) as { x: number; z: number }
+
+              if (result && typeof result.x === 'number' && typeof result.z === 'number') {
+                velocity = new THREE.Vector3(result.x, 0, result.z)
+                console.log(`🛡️ Obstacle avoidance applied: (${result.x.toFixed(2)}, ${result.z.toFixed(2)})`)
+                break
+              }
+            } catch {
+              // Try next function name
+              continue
+            }
+          }
+        } catch (error: any) {
+          console.warn(`⚠️ Obstacle avoidance failed, using direct path:`, error.message)
+        }
+      }
 
       bodyRef.current.setLinvel({ x: velocity.x, y: 0, z: velocity.z }, true)
 
-      // Rotate to face direction
-      const angle = Math.atan2(direction.x, direction.z)
+      // Rotate to face movement direction
+      const angle = Math.atan2(velocity.x, velocity.z)
       bodyRef.current.setRotation({ x: 0, y: angle, z: 0, w: 1 }, true)
     }
   })
