@@ -1,10 +1,43 @@
+# Environment files
 .env
-*.pyc
-__pycache__/
-venv/
 .env.local
 .env.*.local
+
+# Python
+*.pyc
+*.pyo
+__pycache__/
+venv/
+*.egg-info/
+
+# Node.js
 node_modules/
 dist/
 build/
+
+# Logs and temp files
 *.log
+*.pid
+logs/
+logs_*.txt
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Database files (use cloud services instead)
+data/chroma/
+backend/data/chroma/
+*.db
+*.sqlite
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Deployment temp files
+/tmp/
+.vercel
+.netlify

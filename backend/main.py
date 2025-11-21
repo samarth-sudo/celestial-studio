@@ -101,11 +101,17 @@ ALLOWED_ORIGINS = [
     FRONTEND_URL,
     "http://localhost:3000",  # Alternative dev port
     "http://localhost:5173",  # Vite default
+    "https://*.vercel.app",   # Vercel deployments
 ]
 
 # Allow all origins in development, specific origins in production
 if os.getenv("ENVIRONMENT") == "production":
+    # In production, be more restrictive but support Vercel domains
     allowed_origins = ALLOWED_ORIGINS
+    # Also allow Vercel preview deployments if VERCEL_URL is set
+    vercel_url = os.getenv("VERCEL_URL")
+    if vercel_url and vercel_url not in allowed_origins:
+        allowed_origins.append(f"https://{vercel_url}")
 else:
     # Development: allow all origins for easier testing
     allowed_origins = ["*"]
@@ -119,13 +125,15 @@ app.add_middleware(
 )
 
 # Ollama configuration
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "qwen2.5-coder:7b"  # Using base model for code generation
+# Use environment variable for Ollama URL (supports ngrok tunnel for production)
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_URL = f"{OLLAMA_BASE_URL}/api/generate"
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5-coder-robotics:latest")
 
 # Check if Ollama is available
 def check_ollama():
     try:
-        response = requests.get("http://localhost:11434/api/tags", timeout=2)
+        response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=2)
         return response.status_code == 200
     except:
         return False
@@ -377,59 +385,63 @@ async def export_package(request: ExportRequest):
         raise HTTPException(status_code=500, detail=f"Failed to generate package: {str(e)}")
 
 
-@app.get("/api/export/download/{filename}")
-async def download_package(filename: str):
-    """
-    Download generated package ZIP file
-
-    Returns the ZIP file for download
-    """
-    try:
-        # Security: Validate filename to prevent path traversal attacks
-        if not filename.endswith('.zip'):
-            raise HTTPException(status_code=400, detail="Invalid file format")
-
-        # Prevent path traversal: no directory separators or parent directory refs
-        if '/' in filename or '\\' in filename or '..' in filename:
-            raise HTTPException(status_code=400, detail="Invalid filename: path traversal detected")
-
-        # Only allow alphanumeric, dash, underscore, and dot
-        import re
-        if not re.match(r'^[a-zA-Z0-9_\-\.]+\.zip$', filename):
-            raise HTTPException(status_code=400, detail="Invalid filename format")
-
-        # Find the file in temp directory
-        # PackageGenerator creates temp files in system temp directory
-        import tempfile
-        temp_dir = tempfile.gettempdir()
-
-        # Look for the file in celestial_export_* directories
-        file_path = None
-        for item in os.listdir(temp_dir):
-            if item.startswith('celestial_export_'):
-                potential_path = os.path.join(temp_dir, item, filename)
-                # Additional security: verify the resolved path is still within temp_dir
-                resolved_path = os.path.realpath(potential_path)
-                if os.path.exists(resolved_path) and resolved_path.startswith(os.path.realpath(temp_dir)):
-                    file_path = resolved_path
-                    break
-
-        if not file_path or not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail="Package file not found")
-
-        print(f"📦 Downloading package: {filename}")
-
-        return FileResponse(
-            path=file_path,
-            media_type='application/zip',
-            filename=filename
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"❌ Download error: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to download package: {str(e)}")
+# TEMPORARILY DISABLED FOR SERVERLESS DEPLOYMENT
+# This endpoint relies on local file system storage which doesn't work in serverless environments
+# TODO: Implement using cloud storage (Vercel Blob, S3, or Railway Volumes) for production
+#
+# @app.get("/api/export/download/{filename}")
+# async def download_package(filename: str):
+#     """
+#     Download generated package ZIP file
+#
+#     Returns the ZIP file for download
+#     """
+#     try:
+#         # Security: Validate filename to prevent path traversal attacks
+#         if not filename.endswith('.zip'):
+#             raise HTTPException(status_code=400, detail="Invalid file format")
+#
+#         # Prevent path traversal: no directory separators or parent directory refs
+#         if '/' in filename or '\\' in filename or '..' in filename:
+#             raise HTTPException(status_code=400, detail="Invalid filename: path traversal detected")
+#
+#         # Only allow alphanumeric, dash, underscore, and dot
+#         import re
+#         if not re.match(r'^[a-zA-Z0-9_\-\.]+\.zip$', filename):
+#             raise HTTPException(status_code=400, detail="Invalid filename format")
+#
+#         # Find the file in temp directory
+#         # PackageGenerator creates temp files in system temp directory
+#         import tempfile
+#         temp_dir = tempfile.gettempdir()
+#
+#         # Look for the file in celestial_export_* directories
+#         file_path = None
+#         for item in os.listdir(temp_dir):
+#             if item.startswith('celestial_export_'):
+#                 potential_path = os.path.join(temp_dir, item, filename)
+#                 # Additional security: verify the resolved path is still within temp_dir
+#                 resolved_path = os.path.realpath(potential_path)
+#                 if os.path.exists(resolved_path) and resolved_path.startswith(os.path.realpath(temp_dir)):
+#                     file_path = resolved_path
+#                     break
+#
+#         if not file_path or not os.path.exists(file_path):
+#             raise HTTPException(status_code=404, detail="Package file not found")
+#
+#         print(f"📦 Downloading package: {filename}")
+#
+#         return FileResponse(
+#             path=file_path,
+#             media_type='application/zip',
+#             filename=filename
+#         )
+#
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         print(f"❌ Download error: {e}")
+#         raise HTTPException(status_code=500, detail=f"Failed to download package: {str(e)}")
 
 
 class BenchmarkRequest(BaseModel):

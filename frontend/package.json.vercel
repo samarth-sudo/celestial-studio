@@ -1,0 +1,5 @@
+{
+  "scripts": {
+    "vercel-build": "npm run build && echo 'Build complete'"
+  }
+}

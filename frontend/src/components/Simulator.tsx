@@ -16,6 +16,7 @@ import CameraViewWindow from './CameraViewWindow'
 import ObjectPalette from './ObjectPalette'
 import PathExecutionPanel from './PathExecutionPanel'
 import AlgorithmControls from './AlgorithmControls'
+import AlgorithmDebugOverlay from './AlgorithmDebugOverlay'
 import { getAlgorithmManager } from '../services/AlgorithmManager'
 import { AStarPathPlanner } from '../utils/pathPlanning'
 import type { ComputedPath } from '../types/PathPlanning'
@@ -140,6 +141,30 @@ export default function Simulator({ sceneConfig, onSceneChange }: SimulatorProps
   const [currentWaypoint, setCurrentWaypoint] = useState(0)
   const [totalWaypoints, setTotalWaypoints] = useState(0)
 
+  // Algorithm status tracking for debug overlay
+  const [algorithmActive, setAlgorithmActive] = useState(false)
+  const [algorithmName, setAlgorithmName] = useState<string | undefined>()
+
+  // Debug overlay visibility
+  const [showDebugOverlay, setShowDebugOverlay] = useState(true)
+
+  // Debug FPV mode initialization
+  useEffect(() => {
+    if (showCameraView) {
+      console.log('🎥 FPV Camera View Opened:', {
+        sceneAvailable: !!threeScene,
+        robotPosition,
+        robotRotation,
+        sceneConfig: sceneConfig ? 'Available' : 'Missing',
+        editableObjectsCount: editableObjects?.length || 0
+      })
+
+      if (!threeScene) {
+        console.warn('⚠️ FPV Warning: Three.js scene not initialized yet')
+      }
+    }
+  }, [showCameraView, threeScene, robotPosition, robotRotation, sceneConfig, editableObjects])
+
   // Callback to update robot position from robot components
   const handleRobotPositionUpdate = (
     position: [number, number, number],
@@ -153,6 +178,12 @@ export default function Simulator({ sceneConfig, onSceneChange }: SimulatorProps
   const handleWaypointUpdate = (current: number, total: number) => {
     setCurrentWaypoint(current)
     setTotalWaypoints(total)
+  }
+
+  // Callback to update algorithm status from robot components
+  const handleAlgorithmStatusUpdate = (active: boolean, name?: string) => {
+    setAlgorithmActive(active)
+    setAlgorithmName(name)
   }
 
   const manager = getAlgorithmManager()
@@ -764,6 +795,7 @@ export default function Simulator({ sceneConfig, onSceneChange }: SimulatorProps
                   <MobileRobot
                     onPositionUpdate={handleRobotPositionUpdate}
                     onWaypointUpdate={handleWaypointUpdate}
+                    onAlgorithmStatusUpdate={handleAlgorithmStatusUpdate}
                     path={computedPath}
                     isPaused={!isPlaying}
                     obstacles={extractPathPlanningElements().obstacles}
@@ -809,6 +841,19 @@ export default function Simulator({ sceneConfig, onSceneChange }: SimulatorProps
           {/* Environment lighting */}
           <Environment preset="city" />
         </Canvas>
+      )}
+
+      {/* Debug Overlay - Shows real-time robot and algorithm status */}
+      {showDebugOverlay && sceneConfig?.robot?.type === 'mobile_robot' && (
+        <AlgorithmDebugOverlay
+          robotId="robot-1"
+          position={robotPosition}
+          rotation={robotRotation}
+          currentWaypoint={currentWaypoint}
+          totalWaypoints={totalWaypoints}
+          algorithmActive={algorithmActive}
+          algorithmName={algorithmName}
+        />
       )}
     </div>
   )

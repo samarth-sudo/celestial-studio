@@ -3,14 +3,30 @@ import requests
 import os
 from typing import Dict, List, Optional
 
+try:
+    from chat.memory_manager import get_memory_manager
+except ImportError:
+    from backend.chat.memory_manager import get_memory_manager
+
 
 class ConversationContext:
     """Manages conversation state and tracks simulation requirements"""
 
-    def __init__(self):
+    def __init__(self, user_id: str = "default_user"):
         self.requirements = {}
         self.conversation_history = []
         self.ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        self.user_id = user_id
+
+        # Question limit to prevent infinite loops
+        self.question_count = 0
+        self.MAX_QUESTIONS = 2  # Maximum clarification questions before forcing generation
+
+        # Initialize memory manager for long-term storage
+        self.memory = get_memory_manager()
+
+        # Load recent conversation history from ChromaDB
+        self._load_recent_history()
 
     def update_from_message(self, user_message: str) -> Dict:
         """Extract requirements from user's message and update context
@@ -91,8 +107,16 @@ JSON:"""
             # Fallback: simple keyword detection
             self.requirements = self._fallback_extraction(user_message, self.requirements)
 
-        # Add to conversation history
+        # Add to conversation history (in-memory)
         self.conversation_history.append(user_message)
+
+        # Store in ChromaDB for long-term memory
+        self.memory.add_conversation_message(
+            user_id=self.user_id,
+            message=user_message,
+            role="user",
+            metadata={"requirements": self.requirements}
+        )
 
         return self.requirements
 
@@ -158,7 +182,18 @@ JSON:"""
         return reqs
 
     def is_ready_to_generate(self) -> bool:
-        """Check if we have minimum requirements to generate simulation"""
+        """Check if we have minimum requirements to generate simulation
+
+        Returns True if:
+        1. We have all required fields (robot_type, task, environment), OR
+        2. We've asked maximum number of questions (force generation with partial info)
+        """
+        # Force generation if we've asked too many questions
+        if self.question_count >= self.MAX_QUESTIONS:
+            print(f"⚠️ Question limit reached ({self.question_count}/{self.MAX_QUESTIONS}), forcing generation")
+            return True
+
+        # Check for required fields
         required_fields = ['robot_type', 'task', 'environment']
         has_required = all(field in self.requirements for field in required_fields)
 
@@ -189,7 +224,16 @@ JSON:"""
         """Generate a friendly, ChatGPT-like conversational response
 
         This acknowledges what the user said and naturally asks for missing info.
+        Returns None if we should stop asking and generate simulation.
         """
+        # Increment question counter
+        self.question_count += 1
+        print(f"📊 Question count: {self.question_count}/{self.MAX_QUESTIONS}")
+
+        # If we've asked too many questions, return None to trigger generation
+        if self.question_count >= self.MAX_QUESTIONS:
+            print(f"⚠️ Maximum questions exceeded, stopping clarification")
+            return None
 
         # Build conversation history for context
         history_text = "\n".join([f"User: {msg}" for msg in self.conversation_history[-3:]])  # Last 3 messages
@@ -252,6 +296,47 @@ Your response (2-3 sentences max, friendly tone):"""
             # Fallback to simple question
             missing_item = missing_info[0] if missing_info else "robot details"
             return f"Thanks! Could you tell me more about the {missing_item}?"
+
+    def _load_recent_history(self):
+        """Load recent conversation history from ChromaDB"""
+        try:
+            messages = self.memory.get_conversation_history(
+                user_id=self.user_id,
+                limit=10  # Load last 10 messages
+            )
+            self.conversation_history = [msg['content'] for msg in messages if msg['role'] == 'user']
+            print(f"📚 Loaded {len(self.conversation_history)} recent messages from memory")
+        except Exception as e:
+            print(f"⚠️ Failed to load conversation history: {e}")
+            self.conversation_history = []
+
+    def get_llm_context(self, current_message: str) -> str:
+        """
+        Get token-efficient context for LLM using ChromaDB semantic search
+
+        This replaces sending all conversation history by only sending
+        relevant past context in TOON format
+
+        Args:
+            current_message: Current user message
+
+        Returns:
+            Formatted context string for LLM prompt
+        """
+        try:
+            # Get relevant context from ChromaDB (uses semantic search + TOON format)
+            context = self.memory.get_relevant_context(
+                user_id=self.user_id,
+                current_message=current_message,
+                max_messages=10,
+                max_algorithms=3
+            )
+            return context
+        except Exception as e:
+            print(f"⚠️ Failed to get LLM context: {e}")
+            # Fallback to last 3 messages
+            recent = "\n".join(self.conversation_history[-3:])
+            return f"Recent conversation:\n{recent}"
 
     def reset(self):
         """Reset conversation context"""

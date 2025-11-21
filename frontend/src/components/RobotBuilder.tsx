@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import axios from 'axios'
+import { config } from '../config'
 import './RobotBuilder.css'
 
 interface Link {
@@ -129,7 +130,7 @@ export default function RobotBuilder({ onRobotGenerated }: RobotBuilderProps) {
   // Load preset
   const loadPreset = async (presetId: string) => {
     try {
-      const response = await axios.get(`http://localhost:8000/api/urdf/presets/${presetId}`)
+      const response = await axios.get(`${config.backendUrl}/api/urdf/presets/${presetId}`)
       onRobotGenerated(response.data.scene_config)
       setShowPresets(false)
     } catch (error) {
@@ -144,7 +145,7 @@ export default function RobotBuilder({ onRobotGenerated }: RobotBuilderProps) {
     setError(null)
 
     try {
-      const response = await axios.post('http://localhost:8000/api/urdf/generate', {
+      const response = await axios.post(`${config.backendUrl}/api/urdf/generate`, {
         robot_name: robotName,
         links: links.map(link => ({
           name: link.name,

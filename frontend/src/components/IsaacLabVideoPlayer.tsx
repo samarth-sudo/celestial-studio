@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import axios from 'axios'
+import { config } from '../config'
 import './IsaacLabVideoPlayer.css'
 
 interface IsaacLabVideoPlayerProps {
@@ -95,7 +96,7 @@ export default function IsaacLabVideoPlayer({
       console.log('Created offer, sending to backend...')
 
       // Send offer to backend
-      const response = await axios.post('http://localhost:8000/api/webrtc/offer', {
+      const response = await axios.post(`${config.backendUrl}/api/webrtc/offer`, {
         session_id: sessionId,
         offer: {
           sdp: pc.localDescription?.sdp,

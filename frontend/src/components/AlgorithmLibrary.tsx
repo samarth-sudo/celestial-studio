@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { config } from '../config'
 import './AlgorithmLibrary.css'
 
 interface AlgorithmTemplate {
@@ -37,7 +38,7 @@ export default function AlgorithmLibrary({
   const fetchTemplates = async () => {
     setLoading(true)
     try {
-      const response = await fetch('http://localhost:8000/api/algorithms')
+      const response = await fetch(`${config.backendUrl}/api/algorithms`)
       const data = await response.json()
       setTemplates(data.templates || [])
     } catch (error) {

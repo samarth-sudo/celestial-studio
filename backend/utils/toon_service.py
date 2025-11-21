@@ -180,6 +180,58 @@ Each row represents one record with consistent field structure.
             "savings_percent": round(savings_percent, 1)
         }
 
+    def serialize_conversation(self, messages: List[Dict[str, Any]]) -> str:
+        """
+        Serialize conversation messages to TOON format
+
+        Optimized for chat history with role, content, and timestamp
+
+        Args:
+            messages: List of message dicts with 'role', 'content', 'timestamp'
+
+        Returns:
+            TOON formatted string
+        """
+        try:
+            if not messages:
+                return "conversation: 0\n"
+
+            lines = []
+            lines.append(f"conversation: {len(messages)}")
+            lines.append("timestamp role content_preview")
+
+            for msg in messages:
+                timestamp = msg.get('timestamp', '')[:19]  # YYYY-MM-DD HH:MM:SS
+                role = msg.get('role', 'unknown')[:10]  # Limit role length
+                content = msg.get('content', '')
+
+                # Create preview (first 80 chars, replace newlines)
+                preview = content[:80].replace('\n', ' ').replace('\r', ' ')
+                if len(content) > 80:
+                    preview += "..."
+
+                # Escape spaces in preview
+                if ' ' in preview:
+                    preview = f'"{preview}"'
+
+                lines.append(f"{timestamp} {role} {preview}")
+
+            toon_string = "\n".join(lines)
+
+            # Log savings
+            json_string = json.dumps(messages, indent=2)
+            savings = (1 - len(toon_string) / len(json_string)) * 100
+            print(f"📊 TOON Conversation Serialization:")
+            print(f"   Original JSON: {len(json_string)} chars")
+            print(f"   TOON format: {len(toon_string)} chars")
+            print(f"   Savings: {savings:.1f}%")
+
+            return toon_string
+
+        except Exception as e:
+            print(f"⚠️  TOON conversation serialization error: {e}")
+            return json.dumps(messages, indent=2)
+
     def _is_uniform(self, data: List[Dict]) -> bool:
         """Check if list of dicts has uniform structure"""
         if not data:

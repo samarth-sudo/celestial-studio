@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import axios from 'axios'
+import { config } from '../config'
 import './URDFUploader.css'
 
 interface URDFUploaderProps {
@@ -27,7 +28,7 @@ export default function URDFUploader({ onRobotLoaded }: URDFUploaderProps) {
     formData.append('file', file)
 
     try {
-      const response = await axios.post('http://localhost:8000/api/urdf/parse', formData, {
+      const response = await axios.post(`${config.backendUrl}/api/urdf/parse`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         }

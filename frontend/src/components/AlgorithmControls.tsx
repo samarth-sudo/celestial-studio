@@ -8,6 +8,10 @@ import { useState, useEffect, useCallback } from 'react'
 import { getAlgorithmManager, type Algorithm, type AlgorithmParameter } from '../services/AlgorithmManager'
 import type { AlgorithmType } from '../types'
 import AlgorithmLibrary from './AlgorithmLibrary'
+import ParameterPanel from './ParameterPanel'
+import GenerationProgress from './GenerationProgress'
+import { useToast } from '../hooks/useToast'
+import axios from 'axios'
 import './AlgorithmControls.css'
 
 interface AlgorithmControlsProps {
@@ -41,8 +45,10 @@ export default function AlgorithmControls({
   const [expandedCodeId, setExpandedCodeId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [showLibrary, setShowLibrary] = useState(false)
+  const [expandedParametersId, setExpandedParametersId] = useState<string | null>(null)
 
   const manager = getAlgorithmManager()
+  const { showToast } = useToast()
 
   const loadAlgorithms = useCallback(() => {
     const allAlgorithms = manager.getAllAlgorithms()
@@ -76,12 +82,63 @@ export default function AlgorithmControls({
       setShowGenerator(false)
 
       console.log('✅ Algorithm generated:', algorithm.name)
-      // Optional: Show success message
-      // alert(`✅ Successfully generated: ${algorithm.name}`)
+
+      // Success toast
+      showToast({
+        type: 'success',
+        title: 'Algorithm Generated',
+        message: `"${algorithm.name}" is ready to use`
+      })
     } catch (error: unknown) {
       console.error('❌ Generation failed:', error)
-      const errorMessage = error instanceof Error ? error.message : 'Failed to generate algorithm. Check console for details.'
-      alert(`❌ Generation failed:\n\n${errorMessage}\n\nNote: Algorithm generation takes 10-20 seconds. Check browser console for detailed logs.`)
+
+      // Smart error handling with specific toast messages
+      if (axios.isAxiosError(error)) {
+        if (error.code === 'ECONNABORTED') {
+          showToast({
+            type: 'error',
+            title: 'Generation Timeout',
+            message: 'Algorithm generation took too long (>60s). The AI may be overloaded.',
+            action: {
+              label: 'Try Again',
+              onClick: () => handleGenerate()
+            }
+          })
+        } else if (error.response?.status === 500) {
+          showToast({
+            type: 'error',
+            title: 'AI Service Error',
+            message: error.response?.data?.detail || 'The AI code generator encountered an error.',
+            action: {
+              label: 'Copy Error',
+              onClick: () => navigator.clipboard.writeText(JSON.stringify(error.response?.data))
+            }
+          })
+        } else if (!error.response) {
+          showToast({
+            type: 'error',
+            title: 'Backend Offline',
+            message: `Cannot connect to backend server. Is it running?`,
+            action: {
+              label: 'Retry',
+              onClick: () => handleGenerate()
+            }
+          })
+        } else {
+          showToast({
+            type: 'error',
+            title: 'Generation Failed',
+            message: error.message || 'Unknown error occurred'
+          })
+        }
+      } else {
+        const errorMessage = error instanceof Error ? error.message : 'Failed to generate algorithm'
+        showToast({
+          type: 'error',
+          title: 'Generation Failed',
+          message: errorMessage
+        })
+      }
     } finally {
       setIsGenerating(false)
     }
@@ -93,21 +150,84 @@ export default function AlgorithmControls({
       if (!algorithm) return
 
       manager.applyAlgorithm(robotId, algorithmId)
-      setActiveAlgorithmId(algorithmId)
+
+      // Update active algorithms set
+      setActiveAlgorithmIds(prev => new Set([...prev, algorithmId]))
 
       if (onAlgorithmApplied) {
         onAlgorithmApplied(algorithm)
       }
 
       console.log(`🔄 Applied ${algorithm.name} to robot`)
+
+      // Success toast
+      showToast({
+        type: 'success',
+        title: 'Algorithm Applied',
+        message: `"${algorithm.name}" is now active on ${robotId}`
+      })
     } catch (error) {
       console.error('❌ Failed to apply algorithm:', error)
-      alert('Failed to apply algorithm')
+      const message = error instanceof Error ? error.message : 'Unknown error occurred'
+      showToast({
+        type: 'error',
+        title: 'Cannot Apply Algorithm',
+        message: `Failed to activate the algorithm. ${message}`
+      })
+    }
+  }
+
+  const handleRemove = (algorithmId: string) => {
+    try {
+      const algorithm = algorithms.find(a => a.id === algorithmId)
+      if (!algorithm) return
+
+      manager.removeAlgorithm(robotId, algorithmId)
+
+      // Update active algorithms set
+      setActiveAlgorithmIds(prev => {
+        const newSet = new Set(prev)
+        newSet.delete(algorithmId)
+        return newSet
+      })
+
+      console.log(`🗑️ Removed ${algorithm.name} from robot`)
+
+      // Success toast
+      showToast({
+        type: 'success',
+        title: 'Algorithm Removed',
+        message: `"${algorithm.name}" deactivated from ${robotId}`
+      })
+    } catch (error) {
+      console.error('❌ Failed to remove algorithm:', error)
+      const message = error instanceof Error ? error.message : 'Unknown error occurred'
+      showToast({
+        type: 'error',
+        title: 'Cannot Remove Algorithm',
+        message: `Failed to deactivate the algorithm. ${message}`
+      })
     }
   }
 
   const toggleCodeView = (algorithmId: string) => {
     setExpandedCodeId(expandedCodeId === algorithmId ? null : algorithmId)
+  }
+
+  const toggleParametersView = (algorithmId: string) => {
+    setExpandedParametersId(expandedParametersId === algorithmId ? null : algorithmId)
+  }
+
+  const handleParameterChange = (algorithmId: string, paramName: string, value: any) => {
+    console.log(`🎛️ Parameter changed: ${paramName} = ${value} for ${algorithmId}`)
+
+    // Success toast for parameter changes
+    showToast({
+      type: 'info',
+      title: 'Parameter Updated',
+      message: `${paramName} = ${typeof value === 'number' ? value.toFixed(2) : value}`,
+      duration: 2000
+    })
   }
 
   const copyCode = async (code: string, algorithmId: string) => {
@@ -155,9 +275,25 @@ export default function AlgorithmControls({
       setShowLibrary(false)
 
       console.log('✅ Template added:', template.name)
+
+      // Success toast
+      showToast({
+        type: 'success',
+        title: 'Template Added',
+        message: `"${template.name}" is ready to use`,
+        action: {
+          label: 'Apply Now',
+          onClick: () => handleApply(algorithm.id)
+        }
+      })
     } catch (error) {
       console.error('❌ Failed to use template:', error)
-      alert('Failed to use template')
+      const message = error instanceof Error ? error.message : 'Unknown error occurred'
+      showToast({
+        type: 'error',
+        title: 'Cannot Use Template',
+        message: `Failed to add template. ${message}`
+      })
     }
   }
 
@@ -227,12 +363,10 @@ export default function AlgorithmControls({
             {isGenerating ? '⏳ Generating...' : '🚀 Generate Algorithm'}
           </button>
 
-          {isGenerating && (
-            <div className="generation-status">
-              <p>⚙️ Generating algorithm with AI...</p>
-              <p className="status-note">This typically takes 10-20 seconds. Please wait...</p>
-            </div>
-          )}
+          <GenerationProgress
+            isGenerating={isGenerating}
+            onCancel={() => setIsGenerating(false)}
+          />
         </div>
       )}
 
@@ -242,37 +376,49 @@ export default function AlgorithmControls({
         {algorithms.length === 0 ? (
           <p className="empty-state">No algorithms yet. Generate one to get started!</p>
         ) : (
-          algorithms.map(algo => (
-            <div
-              key={algo.id}
-              className={`algorithm-card ${activeAlgorithmId === algo.id ? 'active' : ''}`}
-            >
-              <div className="algorithm-header">
-                <h5>{algo.name}</h5>
-                <span
-                  className="algorithm-type-badge"
-                  style={{ backgroundColor: getAlgorithmTypeColor(algo.type) }}
-                >
-                  {algo.type.replace('_', ' ')}
-                </span>
-              </div>
-
-              <p className="algorithm-description">{algo.description}</p>
-
-              <div className="algorithm-meta">
-                <span className="complexity">{algo.complexity}</span>
-                <span className="param-count">
-                  {algo.parameters.length} parameters
-                </span>
-              </div>
-
-              <button
-                className={`apply-btn ${activeAlgorithmId === algo.id ? 'applied' : ''}`}
-                onClick={() => handleApply(algo.id)}
-                disabled={activeAlgorithmId === algo.id}
+          algorithms.map(algo => {
+            const isActive = activeAlgorithmIds.has(algo.id)
+            return (
+              <div
+                key={algo.id}
+                className={`algorithm-card ${isActive ? 'active' : ''}`}
               >
-                {activeAlgorithmId === algo.id ? '✓ Active' : 'Apply to Robot'}
-              </button>
+                <div className="algorithm-header">
+                  <h5>{algo.name}</h5>
+                  <span
+                    className="algorithm-type-badge"
+                    style={{ backgroundColor: getAlgorithmTypeColor(algo.type) }}
+                  >
+                    {algo.type.replace('_', ' ')}
+                  </span>
+                </div>
+
+                <p className="algorithm-description">{algo.description}</p>
+
+                <div className="algorithm-meta">
+                  <span className="complexity">{algo.complexity}</span>
+                  <span className="param-count">
+                    {algo.parameters.length} parameters
+                  </span>
+                </div>
+
+                <div className="algorithm-buttons">
+                  <button
+                    className={`apply-btn ${isActive ? 'applied' : ''}`}
+                    onClick={() => handleApply(algo.id)}
+                    disabled={isActive}
+                  >
+                    {isActive ? '✓ Active' : 'Apply to Robot'}
+                  </button>
+                  {isActive && (
+                    <button
+                      className="remove-btn"
+                      onClick={() => handleRemove(algo.id)}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
 
               <div className="algorithm-actions">
                 <button
@@ -281,6 +427,15 @@ export default function AlgorithmControls({
                 >
                   {expandedCodeId === algo.id ? '▲ Hide Code' : '▼ View Code'}
                 </button>
+
+                {algo.parameters.length > 0 && (
+                  <button
+                    className="tune-params-btn"
+                    onClick={() => toggleParametersView(algo.id)}
+                  >
+                    {expandedParametersId === algo.id ? '▲ Hide Parameters' : '🎛️ Tune Parameters'}
+                  </button>
+                )}
 
                 {algo.type === 'path_planning' && onTestInSandbox && (
                   <button
@@ -308,8 +463,17 @@ export default function AlgorithmControls({
                   </pre>
                 </div>
               )}
+
+              {expandedParametersId === algo.id && (
+                <div className="parameters-section">
+                  <ParameterPanel
+                    algorithmId={algo.id}
+                    onParameterChange={(paramName, value) => handleParameterChange(algo.id, paramName, value)}
+                  />
+                </div>
+              )}
             </div>
-          ))
+          )})
         )}
       </div>
 

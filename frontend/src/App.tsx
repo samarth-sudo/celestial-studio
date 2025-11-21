@@ -4,6 +4,7 @@ import LandingPage from './components/LandingPage'
 import ConversationalChat from './components/ConversationalChat'
 import Simulator from './components/Simulator'
 import CameraViewTest from './pages/CameraViewTest'
+import ToastNotification from './components/ToastNotification'
 import './App.css'
 
 function App() {
@@ -44,6 +45,9 @@ function App() {
 
   return (
     <div className="app">
+      {/* Global Toast Notifications */}
+      <ToastNotification />
+
       <div className="app-content">
         <div className="left-panel">
           <ConversationalChat

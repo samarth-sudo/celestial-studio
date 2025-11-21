@@ -6,6 +6,7 @@
  */
 
 import axios from 'axios'
+import { config } from '../config'
 
 export type ExportFormat = 'react' | 'ros' | 'python' | 'algorithms'
 
@@ -38,7 +39,7 @@ export interface ExportFormatInfo {
  * ExportService - Package generation and download
  */
 export class ExportService {
-  private readonly API_URL = 'http://localhost:8000'
+  private readonly API_URL = config.backendUrl
   private currentExport: ExportResponse | null = null
 
   /**

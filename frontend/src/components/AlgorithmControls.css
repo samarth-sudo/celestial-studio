@@ -23,6 +23,12 @@
   background-clip: text;
 }
 
+.header-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.browse-btn,
 .generate-btn {
   background: linear-gradient(135deg, var(--accent-blue-primary), var(--accent-purple));
   color: white;
@@ -36,9 +42,19 @@
   box-shadow: var(--glow-blue);
 }
 
+.browse-btn {
+  background: linear-gradient(135deg, var(--accent-purple), var(--accent-pink-primary));
+  box-shadow: 0 2px 8px rgba(155, 89, 182, 0.4);
+}
+
+.browse-btn:hover,
 .generate-btn:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 16px rgba(33, 150, 243, 0.5);
+}
+
+.browse-btn:hover {
+  box-shadow: 0 4px 16px rgba(155, 89, 182, 0.5);
 }
 
 .algorithm-generator {
@@ -227,8 +243,14 @@
   gap: 5px;
 }
 
+.algorithm-buttons {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
 .apply-btn {
-  width: 100%;
+  flex: 1;
   padding: 8px;
   border: none;
   border-radius: 6px;
@@ -256,13 +278,34 @@
   cursor: not-allowed;
 }
 
+.remove-btn {
+  padding: 8px 16px;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all var(--transition-normal);
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+.remove-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: #ef4444;
+  transform: translateY(-2px);
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
+}
+
 .algorithm-actions {
   display: flex;
   gap: 8px;
   margin-top: 8px;
+  flex-wrap: wrap;
 }
 
 .view-code-btn,
+.tune-params-btn,
 .test-sandbox-btn {
   flex: 1;
   padding: 6px;
@@ -272,6 +315,7 @@
   font-size: 12px;
   font-weight: 500;
   transition: all var(--transition-normal);
+  min-width: 120px;
 }
 
 .view-code-btn {
@@ -284,6 +328,18 @@
   background: rgba(33, 150, 243, 0.2);
   border-color: var(--accent-blue-primary);
   box-shadow: var(--glow-blue);
+}
+
+.tune-params-btn {
+  background: rgba(155, 89, 182, 0.1);
+  color: var(--accent-purple);
+  border-color: rgba(155, 89, 182, 0.3);
+}
+
+.tune-params-btn:hover {
+  background: rgba(155, 89, 182, 0.2);
+  border-color: var(--accent-purple);
+  box-shadow: 0 2px 8px rgba(155, 89, 182, 0.4);
 }
 
 .test-sandbox-btn {
@@ -355,6 +411,22 @@
   white-space: pre;
   word-wrap: normal;
   display: block;
+}
+
+.parameters-section {
+  margin-top: 12px;
+  animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* Scrollbar styling */

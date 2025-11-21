@@ -76,26 +76,70 @@ export default function CameraView({
 
   // Initialize Three.js camera and renderer
   useEffect(() => {
-    if (!containerRef.current || !canvasRef.current) return
+    console.log('🚀 FPV CameraView mounting...', {
+      sceneProvided: !!scene,
+      sceneChildren: scene?.children?.length || 0,
+      robotPosition: robotPosition.toArray(),
+      robotRotation: robotRotation.toArray(),
+      containerExists: !!containerRef.current,
+      canvasExists: !!canvasRef.current
+    })
+
+    if (!containerRef.current || !canvasRef.current) {
+      console.error('❌ FPV mount failed: Missing container or canvas')
+      return
+    }
+
+    if (!scene) {
+      console.warn('⚠️ FPV mount warning: Scene is null - waiting for scene...')
+      return
+    }
 
     // Create camera (robot's perspective)
     const camera = new THREE.PerspectiveCamera(
       75, // FOV
       containerRef.current.clientWidth / containerRef.current.clientHeight,
-      0.1,
-      1000
+      0.01, // Very close near plane to see nearby objects
+      100 // Reasonable far plane
     )
     cameraRef.current = camera
+
+    console.log('🎥 FPV Camera initialized:', {
+      fov: 75,
+      aspect: camera.aspect,
+      near: 0.01,
+      far: 100,
+      containerSize: {
+        width: containerRef.current.clientWidth,
+        height: containerRef.current.clientHeight
+      }
+    })
 
     // Create renderer
     const renderer = new THREE.WebGLRenderer({
       canvas: canvasRef.current,
       antialias: true,
-      alpha: false
+      alpha: true,
+      preserveDrawingBuffer: true // Needed for capturing frames
     })
     renderer.setSize(containerRef.current.clientWidth, containerRef.current.clientHeight)
-    renderer.setPixelRatio(window.devicePixelRatio)
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)) // Cap at 2x for performance
+    renderer.setClearColor(0x87CEEB, 1) // Sky blue background instead of black
+    renderer.shadowMap.enabled = true
     rendererRef.current = renderer
+
+    // Add WebGL context loss handlers to prevent crashes
+    const canvas = canvasRef.current
+    const handleContextLost = (event: Event) => {
+      event.preventDefault()
+      console.warn('⚠️ FPV WebGL context lost - pausing rendering')
+    }
+    const handleContextRestored = () => {
+      console.log('✅ FPV WebGL context restored - resuming rendering')
+      // Renderer will automatically resume in next animation frame
+    }
+    canvas.addEventListener('webglcontextlost', handleContextLost)
+    canvas.addEventListener('webglcontextrestored', handleContextRestored)
 
     // Create render target for capturing frames
     const renderTarget = new THREE.WebGLRenderTarget(
@@ -133,21 +177,41 @@ export default function CameraView({
 
     return () => {
       window.removeEventListener('resize', handleResize)
+      canvas.removeEventListener('webglcontextlost', handleContextLost)
+      canvas.removeEventListener('webglcontextrestored', handleContextRestored)
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current)
       }
       renderer.dispose()
       renderTarget.dispose()
     }
-  }, [])
+  }, [scene]) // Re-run when scene becomes available
 
   // Update camera position/rotation to match robot
   useEffect(() => {
     if (!cameraRef.current) return
 
     const camera = cameraRef.current
-    camera.position.copy(robotPosition)
-    camera.rotation.copy(robotRotation)
+
+    // Position camera at robot's position with a slight upward offset for better view
+    const cameraPos = robotPosition.clone()
+    cameraPos.y += 0.3 // Raise camera 0.3 units above robot center
+    camera.position.copy(cameraPos)
+
+    // Calculate look-at point based on robot's rotation
+    // Create a forward vector and rotate it by the robot's rotation
+    const forward = new THREE.Vector3(0, 0, -1) // Forward is -Z in Three.js
+    const lookAtPoint = new THREE.Vector3()
+
+    // Apply robot's rotation to the forward vector
+    const euler = new THREE.Euler(robotRotation.x, robotRotation.y, robotRotation.z)
+    forward.applyEuler(euler)
+
+    // Set look-at point 5 units in front of robot
+    lookAtPoint.copy(cameraPos).add(forward.multiplyScalar(5))
+
+    // Make camera look at the point
+    camera.lookAt(lookAtPoint)
     camera.updateMatrixWorld()
   }, [robotPosition, robotRotation])
 
@@ -374,10 +438,39 @@ export default function CameraView({
     }
   }, [isAnalyzing])
 
+  // Add ambient lighting to scene if needed (ensures FPV is never completely black)
+  useEffect(() => {
+    if (!scene) return
+
+    // Check if scene has adequate lighting
+    const lights = scene.children.filter(child => child instanceof THREE.Light)
+
+    if (lights.length === 0) {
+      console.warn('⚠️ No lights in scene, adding emergency ambient light for FPV')
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6)
+      ambientLight.name = 'FPV_Emergency_Ambient'
+      scene.add(ambientLight)
+
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8)
+      directionalLight.position.set(5, 10, 5)
+      directionalLight.name = 'FPV_Emergency_Directional'
+      scene.add(directionalLight)
+
+      return () => {
+        // Cleanup emergency lights
+        const ambient = scene.getObjectByName('FPV_Emergency_Ambient')
+        const directional = scene.getObjectByName('FPV_Emergency_Directional')
+        if (ambient) scene.remove(ambient)
+        if (directional) scene.remove(directional)
+      }
+    }
+  }, [scene])
+
   // Main render loop
   useEffect(() => {
     const animate = () => {
-      if (!rendererRef.current || !cameraRef.current || !renderTargetRef.current) {
+      // Validate all required refs and scene before rendering
+      if (!rendererRef.current || !cameraRef.current || !renderTargetRef.current || !scene) {
         animationFrameRef.current = requestAnimationFrame(animate)
         return
       }
@@ -385,47 +478,69 @@ export default function CameraView({
       const renderer = rendererRef.current
       const camera = cameraRef.current
 
-      // Render scene to canvas
-      renderer.render(scene, camera)
+      try {
+        // Log first render for debugging
+        if (!animate['firstRender']) {
+          console.log('🎥 FPV First render:', {
+            cameraPosition: camera.position.toArray(),
+            cameraRotation: camera.rotation.toArray(),
+            sceneChildren: scene.children.length,
+            rendererSize: { width: renderer.domElement.width, height: renderer.domElement.height }
+          })
+          animate['firstRender'] = true
+        }
 
-      // Generate detections from current view
-      const currentDetections = generateDetections()
-      setDetections(currentDetections)
-      setDetectionCount(currentDetections.length)
+        // Render scene to canvas
+        renderer.render(scene, camera)
 
-      // Calculate average confidence
-      if (currentDetections.length > 0) {
-        const avg = currentDetections.reduce((sum, d) => sum + d.confidence, 0) / currentDetections.length
-        setAvgConfidence(Math.round(avg * 100) / 100)
-      } else {
-        setAvgConfidence(0)
-      }
+        // Generate detections from current view
+        const currentDetections = generateDetections()
+        setDetections(currentDetections)
+        setDetectionCount(currentDetections.length)
 
-      // Update tracking trails
-      updateTrackingTrails(currentDetections)
+        // Calculate average confidence
+        if (currentDetections.length > 0) {
+          const avg = currentDetections.reduce((sum, d) => sum + d.confidence, 0) / currentDetections.length
+          setAvgConfidence(Math.round(avg * 100) / 100)
+        } else {
+          setAvgConfidence(0)
+        }
 
-      // Draw detection overlay
-      drawDetectionOverlay(currentDetections)
+        // Update tracking trails
+        updateTrackingTrails(currentDetections)
 
-      // Notify parent of detections
-      if (onDetectionsUpdate) {
-        onDetectionsUpdate(currentDetections)
-      }
+        // Draw detection overlay
+        drawDetectionOverlay(currentDetections)
 
-      // Calculate FPS
-      fpsCounterRef.current.frames++
-      const now = Date.now()
-      if (now - fpsCounterRef.current.lastTime >= 1000) {
-        setFps(fpsCounterRef.current.frames)
-        fpsCounterRef.current.frames = 0
-        fpsCounterRef.current.lastTime = now
-      }
+        // Notify parent of detections
+        if (onDetectionsUpdate) {
+          onDetectionsUpdate(currentDetections)
+        }
 
-      // Call vision API every 90 frames (~5 seconds at 15 FPS)
-      frameCountRef.current++
-      if (frameCountRef.current >= 90) {
-        analyzeWithVision()
-        frameCountRef.current = 0
+        // Calculate FPS
+        fpsCounterRef.current.frames++
+        const now = Date.now()
+        if (now - fpsCounterRef.current.lastTime >= 1000) {
+          setFps(fpsCounterRef.current.frames)
+          fpsCounterRef.current.frames = 0
+          fpsCounterRef.current.lastTime = now
+        }
+
+        // Call vision API every 90 frames (~5 seconds at 15 FPS)
+        frameCountRef.current++
+        if (frameCountRef.current >= 90) {
+          analyzeWithVision()
+          frameCountRef.current = 0
+        }
+      } catch (error) {
+        console.error('❌ FPV Render error:', error)
+        console.error('Scene state:', {
+          sceneExists: !!scene,
+          sceneChildren: scene?.children?.length,
+          cameraExists: !!cameraRef.current,
+          rendererExists: !!rendererRef.current
+        })
+        // Continue animation loop even if render fails
       }
 
       animationFrameRef.current = requestAnimationFrame(animate)
@@ -438,7 +553,10 @@ export default function CameraView({
         cancelAnimationFrame(animationFrameRef.current)
       }
     }
-  }, [scene, generateDetections, updateTrackingTrails, drawDetectionOverlay, analyzeWithVision, onDetectionsUpdate])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Only re-run when scene changes. Callbacks are accessed via closure and always use latest version.
+    // Including callbacks in deps causes infinite re-render loop as they recreate on state changes.
+  }, [scene])
 
   return (
     <div className="camera-view" ref={containerRef}>

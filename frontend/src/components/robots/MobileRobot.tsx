@@ -1,13 +1,20 @@
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect, useMemo } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { RigidBody, type RapierRigidBody } from '@react-three/rapier'
 import * as THREE from 'three'
 import type { ComputedPath } from '../../types/PathPlanning'
 import { getAlgorithmManager } from '../../services/AlgorithmManager'
+import {
+  FrameRateLimiter,
+  clampVelocity,
+  isValidVelocity,
+  throttle
+} from '../../utils/performanceUtils'
 
 interface MobileRobotProps {
   onPositionUpdate?: (position: [number, number, number], rotation: [number, number, number]) => void
   onWaypointUpdate?: (currentWaypoint: number, totalWaypoints: number) => void
+  onAlgorithmStatusUpdate?: (active: boolean, algorithmName?: string) => void
   path?: ComputedPath | null
   isPaused?: boolean
   obstacles?: Array<{ position: THREE.Vector3; radius: number }>
@@ -17,6 +24,7 @@ interface MobileRobotProps {
 export default function MobileRobot({
   onPositionUpdate,
   onWaypointUpdate,
+  onAlgorithmStatusUpdate,
   path,
   isPaused = false,
   obstacles = [],
@@ -25,19 +33,32 @@ export default function MobileRobot({
   const bodyRef = useRef<RapierRigidBody>(null)
   const manager = getAlgorithmManager()
 
+  // Performance: Frame rate limiter for algorithm execution (10 Hz instead of 60)
+  const algorithmLimiter = useRef(new FrameRateLimiter(10))
+
+  // Performance: Cache algorithm lookups to avoid querying manager 60 times/second
+  const [cachedAlgorithms, setCachedAlgorithms] = useState<{
+    obstacleAvoidance: any[]
+    lastUpdate: number
+  }>({ obstacleAvoidance: [], lastUpdate: 0 })
+
   // Demo waypoints (used when no path is provided)
-  const demoWaypoints = [
+  const demoWaypoints = useMemo(() => [
     new THREE.Vector3(0, 0.5, 0),
     new THREE.Vector3(3, 0.5, 0),
     new THREE.Vector3(3, 0.5, 3),
     new THREE.Vector3(0, 0.5, 3),
     new THREE.Vector3(0, 0.5, 0),
-  ]
+  ], [])
 
   // Use computed path waypoints if available, otherwise use demo waypoints
   const [waypoints, setWaypoints] = useState<THREE.Vector3[]>(demoWaypoints)
   const [currentWaypoint, setCurrentWaypoint] = useState(0)
   const speed = 2
+  const MAX_VELOCITY = 5 // Safety: Maximum allowed velocity magnitude
+
+  // Visual indicator: Track if algorithm is actively modifying velocity
+  const [algorithmActive, setAlgorithmActive] = useState(false)
 
   // Update waypoints when path changes
   useEffect(() => {
@@ -60,6 +81,24 @@ export default function MobileRobot({
       onWaypointUpdate(currentWaypoint, waypoints.length)
     }
   }, [currentWaypoint, waypoints.length, onWaypointUpdate])
+
+  // Performance: Update algorithm cache periodically (every 2 seconds instead of every frame)
+  useEffect(() => {
+    const updateCache = () => {
+      const obstacleAvoidance = manager.getAlgorithmsByType(robotId, 'obstacle_avoidance')
+      setCachedAlgorithms({
+        obstacleAvoidance,
+        lastUpdate: Date.now()
+      })
+    }
+
+    // Initial update
+    updateCache()
+
+    // Update every 2 seconds
+    const interval = setInterval(updateCache, 2000)
+    return () => clearInterval(interval)
+  }, [robotId, manager])
 
   useFrame(() => {
     if (!bodyRef.current) return
@@ -103,13 +142,16 @@ export default function MobileRobot({
       // Calculate base velocity towards target
       direction.normalize()
       let velocity = direction.clone().multiplyScalar(speed)
+      let algorithmModified = false
 
-      // Apply obstacle avoidance if algorithm is active
-      const obstacleAvoidanceAlgos = manager.getAlgorithmsByType(robotId, 'obstacle_avoidance')
-      if (obstacleAvoidanceAlgos.length > 0 && obstacles.length > 0) {
+      // Performance: Only run obstacle avoidance at 10 Hz (not 60 Hz)
+      // Safety: Use cached algorithms instead of querying every frame
+      if (cachedAlgorithms.obstacleAvoidance.length > 0 &&
+          obstacles.length > 0 &&
+          algorithmLimiter.current.shouldExecute()) {
         try {
           // Use the first active obstacle avoidance algorithm
-          const algo = obstacleAvoidanceAlgos[0]
+          const algo = cachedAlgorithms.obstacleAvoidance[0]
 
           // Create current velocity vector for algorithm
           const currentVel = { x: velocity.x, z: velocity.z }
@@ -130,22 +172,45 @@ export default function MobileRobot({
                 obstacles,
                 goal,
                 speed
-              ) as { x: number; z: number }
+              )
 
-              if (result && typeof result.x === 'number' && typeof result.z === 'number') {
+              // Safety: Validate algorithm output before using it
+              if (isValidVelocity(result)) {
                 velocity = new THREE.Vector3(result.x, 0, result.z)
+
+                // Safety: Clamp velocity to maximum allowed magnitude
+                velocity = clampVelocity(velocity, MAX_VELOCITY)
+
+                algorithmModified = true
                 console.log(`🛡️ Obstacle avoidance applied: (${result.x.toFixed(2)}, ${result.z.toFixed(2)})`)
                 break
+              } else {
+                console.warn(`⚠️ Invalid velocity from algorithm: ${JSON.stringify(result)}`)
               }
-            } catch {
+            } catch (error) {
               // Try next function name
               continue
             }
           }
         } catch (error: any) {
           console.warn(`⚠️ Obstacle avoidance failed, using direct path:`, error.message)
+          algorithmModified = false
         }
       }
+
+      // Update visual indicator state
+      if (algorithmActive !== algorithmModified) {
+        setAlgorithmActive(algorithmModified)
+
+        // Notify parent component of algorithm status change
+        if (onAlgorithmStatusUpdate) {
+          const algoName = cachedAlgorithms.obstacleAvoidance[0]?.name
+          onAlgorithmStatusUpdate(algorithmModified, algoName)
+        }
+      }
+
+      // Safety: Always clamp velocity even if no algorithm was applied
+      velocity = clampVelocity(velocity, MAX_VELOCITY)
 
       bodyRef.current.setLinvel({ x: velocity.x, y: 0, z: velocity.z }, true)
 
@@ -158,10 +223,27 @@ export default function MobileRobot({
   return (
     <RigidBody ref={bodyRef} position={[0, 0.5, 0]} colliders="cuboid">
       <group>
+        {/* Visual Indicator: Glowing outline when algorithm is active */}
+        {algorithmActive && (
+          <mesh scale={[1.3, 1.1, 1.1]}>
+            <boxGeometry args={[1.2, 0.6, 0.8]} />
+            <meshBasicMaterial
+              color="#00ff88"
+              transparent
+              opacity={0.3}
+              wireframe
+            />
+          </mesh>
+        )}
+
         {/* Robot Body */}
         <mesh castShadow receiveShadow>
           <boxGeometry args={[1.2, 0.6, 0.8]} />
-          <meshStandardMaterial color="#3498db" />
+          <meshStandardMaterial
+            color="#3498db"
+            emissive={algorithmActive ? "#00ff88" : "#000000"}
+            emissiveIntensity={algorithmActive ? 0.3 : 0}
+          />
         </mesh>
 
         {/* Wheels */}

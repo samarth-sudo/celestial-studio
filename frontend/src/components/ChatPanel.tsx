@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import Editor from '@monaco-editor/react'
 import axios from 'axios'
+import { config } from '../config'
 import './ChatPanel.css'
 
 interface Message {
@@ -59,7 +60,7 @@ export default function ChatPanel({ onCodeGenerated, onSimulate, hasCode, initia
     setIsGenerating(true)
 
     try {
-      const response = await axios.post('http://localhost:8000/api/generate', {
+      const response = await axios.post(`${config.backendUrl}/api/generate`, {
         prompt,
         robot_type: robotType
       })

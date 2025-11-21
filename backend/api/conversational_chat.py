@@ -10,6 +10,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from chat.context_manager import ConversationContext
 from chat.question_generator import SimulationQuestionGenerator
+from chat.memory_manager import get_memory_manager
 from simulation.scene_generator import SceneGenerator
 from export.package_generator import PackageGenerator
 from optimization.comparator import AlgorithmComparator
@@ -886,9 +887,9 @@ async def chat(request: ChatRequest):
                       f"4. Try your request again"
             )
 
-        # Get or create conversation context
+        # Get or create conversation context (with user_id for ChromaDB)
         if user_id not in active_conversations:
-            active_conversations[user_id] = ConversationContext()
+            active_conversations[user_id] = ConversationContext(user_id=user_id)
             print(f"🆕 Created new context for user {user_id}")
         else:
             print(f"♻️  Retrieved existing context for user {user_id}")
@@ -982,6 +983,47 @@ The simulation is now ready in the 3D viewer!
             # Need more information - generate conversational response
             conversational_message = context.generate_conversational_response(message)
 
+            # If generate_conversational_response returns None, it means we've exceeded
+            # question limit and should force generation with partial requirements
+            if conversational_message is None:
+                print(f"⚠️ Question limit exceeded, forcing simulation generation with partial requirements")
+
+                # Generate simulation with whatever we have
+                scene_generator = SceneGenerator()
+                simulation_config = scene_generator.generate_from_requirements(requirements)
+
+                # Store simulation in context
+                context.last_simulation = simulation_config
+
+                # Initialize empty algorithms list
+                if not hasattr(context, 'algorithms'):
+                    context.algorithms = []
+
+                # Build response message acknowledging we're generating with partial info
+                robot_type = requirements.get('robot_type', 'mobile robot')
+                environment = requirements.get('environment', 'simulation environment')
+                task = requirements.get('task', 'autonomous navigation')
+
+                response_message = f"""Got it! I'll create the simulation with the information you've provided:
+
+- Robot: {robot_type}
+- Environment: {environment}
+- Task: {task}
+
+The simulation is now ready in the 3D viewer! You can refine it by chatting with me.
+
+**Next steps:**
+- Generate algorithms for your robot
+- Say "compare algorithms" to benchmark and find the best one
+- Say "download as React" or "export as ROS" to get your complete project"""
+
+                return ChatResponse(
+                    type="simulation_ready",
+                    message=response_message,
+                    simulation=simulation_config,
+                    requirements=requirements
+                )
+
             return ChatResponse(
                 type="clarification_needed",
                 message=conversational_message,
@@ -1067,14 +1109,14 @@ class AlgorithmData(BaseModel):
 @router.post("/api/chat/store-algorithm")
 async def store_algorithm(data: AlgorithmData):
     """
-    Store generated algorithm in conversation context
+    Store generated algorithm in conversation context AND ChromaDB
     This is called by the frontend after an algorithm is generated
     """
     user_id = data.userId
 
     # Get or create conversation context
     if user_id not in active_conversations:
-        active_conversations[user_id] = ConversationContext()
+        active_conversations[user_id] = ConversationContext(user_id=user_id)
 
     context = active_conversations[user_id]
 
@@ -1082,8 +1124,19 @@ async def store_algorithm(data: AlgorithmData):
     if not hasattr(context, 'algorithms'):
         context.algorithms = []
 
-    # Add algorithm to context
+    # Add algorithm to context (in-memory)
     context.algorithms.append(data.algorithm)
+
+    # Store in ChromaDB for long-term memory and semantic search
+    try:
+        memory = get_memory_manager()
+        memory.add_algorithm(
+            user_id=user_id,
+            algorithm=data.algorithm
+        )
+        print(f"✅ Stored algorithm in ChromaDB for user {user_id}")
+    except Exception as e:
+        print(f"⚠️ Failed to store algorithm in ChromaDB: {e}")
 
     print(f"Stored algorithm for user {user_id}. Total algorithms: {len(context.algorithms)}")
 
@@ -1110,13 +1163,24 @@ async def sync_scene(request: SyncSceneRequest):
     try:
         # Get or create conversation context
         if user_id not in active_conversations:
-            active_conversations[user_id] = ConversationContext()
+            active_conversations[user_id] = ConversationContext(user_id=user_id)
             print(f"🆕 Created new context for scene sync - user {user_id}")
 
         context = active_conversations[user_id]
 
-        # Store the scene configuration
+        # Store the scene configuration (in-memory)
         context.last_simulation = scene_config
+
+        # Store in ChromaDB for long-term memory
+        try:
+            memory = get_memory_manager()
+            memory.add_scene(
+                user_id=user_id,
+                scene_config=scene_config
+            )
+            print(f"✅ Stored scene in ChromaDB for user {user_id}")
+        except Exception as e:
+            print(f"⚠️ Failed to store scene in ChromaDB: {e}")
 
         # Extract requirements from scene config
         robot_type = scene_config.get('robot', {}).get('type', 'mobile_robot')

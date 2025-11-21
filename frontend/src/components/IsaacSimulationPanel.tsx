@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import axios from 'axios'
+import { config } from '../config'
 import IsaacLabVideoPlayer from './IsaacLabVideoPlayer'
 import './IsaacSimulationPanel.css'
 
@@ -46,7 +47,7 @@ export default function IsaacSimulationPanel({ sceneConfig, onClose }: IsaacSimu
         setProgress(prev => Math.min(prev + 5, 95))
       }, 1000)
 
-      const response = await axios.post('http://localhost:8000/api/isaac-lab/simulate', {
+      const response = await axios.post(`${config.backendUrl}/api/isaac-lab/simulate`, {
         scene_config: sceneConfig,
         duration,
         record_video: recordVideo,
@@ -81,7 +82,7 @@ export default function IsaacSimulationPanel({ sceneConfig, onClose }: IsaacSimu
 
   const createStreamingSession = async (videoPath: string) => {
     try {
-      const response = await axios.post('http://localhost:8000/api/webrtc/session', {
+      const response = await axios.post(`${config.backendUrl}/api/webrtc/session`, {
         metadata: {
           type: 'isaac_simulation',
           video_path: videoPath

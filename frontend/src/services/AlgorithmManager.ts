@@ -132,6 +132,30 @@ export class AlgorithmManager {
   }
 
   /**
+   * Add an algorithm to the manager (for templates or imported algorithms)
+   *
+   * This method allows directly adding pre-built algorithms without generation.
+   * Used when loading templates or importing existing algorithms.
+   */
+  addAlgorithm(algorithm: Algorithm): void {
+    // Ensure algorithm has a valid ID
+    if (!algorithm.id) {
+      algorithm.id = this.generateId()
+    }
+
+    // Compile code if not already compiled
+    if (!algorithm.compiledFunction && algorithm.code) {
+      algorithm.compiledFunction = this.compileCode(algorithm.code) || undefined
+    }
+
+    // Store algorithm
+    this.algorithms.set(algorithm.id, algorithm)
+
+    console.log(`✅ Added algorithm: ${algorithm.name} (${algorithm.type})`)
+    console.log(`   Total algorithms in manager: ${this.algorithms.size}`)
+  }
+
+  /**
    * Modify an existing algorithm
    */
   async modifyAlgorithm(
