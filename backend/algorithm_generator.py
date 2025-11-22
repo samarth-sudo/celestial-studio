@@ -31,7 +31,7 @@ class AlgorithmRequest:
     algorithm_type: str  # 'path_planning', 'obstacle_avoidance', 'inverse_kinematics', 'computer_vision'
     current_code: Optional[str] = None  # For modifications
     modification_request: Optional[str] = None  # "Make it faster", "Add safety margin", etc.
-    use_web_search: bool = True  # Whether to search for latest research (2024-2025)
+    use_web_search: bool = False  # Disabled by default for faster generation (web search adds 10-30s delay)
 
 
 @dataclass

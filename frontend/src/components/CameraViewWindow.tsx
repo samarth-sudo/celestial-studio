@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Draggable from 'react-draggable'
 import * as THREE from 'three'
 import CameraView from './CameraView'
@@ -29,10 +29,57 @@ export default function CameraViewWindow({
     return saved ? JSON.parse(saved) : { x: 0, y: 0 }
   })
 
+  // Ref for react-draggable (bypasses deprecated findDOMNode in React 19)
+  const nodeRef = useRef<HTMLDivElement>(null)
+
   // Persist position to localStorage
   useEffect(() => {
     localStorage.setItem('cameraViewPosition', JSON.stringify(position))
   }, [position])
+
+  // Memoize robot position Vector3 to prevent unnecessary re-renders
+  const robotPositionVec = useMemo(
+    () => new THREE.Vector3(robotPosition[0], robotPosition[1], robotPosition[2]),
+    [robotPosition[0], robotPosition[1], robotPosition[2]]
+  )
+
+  // Memoize robot rotation Euler to prevent unnecessary re-renders
+  const robotRotationEuler = useMemo(
+    () => new THREE.Euler(robotRotation[0], robotRotation[1], robotRotation[2]),
+    [robotRotation[0], robotRotation[1], robotRotation[2]]
+  )
+
+  // Memoize objects array to prevent unnecessary re-renders
+  const objects = useMemo(() => {
+    const result = editableObjects.map(obj => ({
+      position: new THREE.Vector3(obj.position[0], obj.position[1], obj.position[2]),
+      label: obj.type || 'object',
+      radius: obj.radius || (obj.size ? Math.max(...obj.size) / 2 : 0.5),
+      color: obj.color
+    }))
+
+    // Add scene config objects if present
+    if (sceneConfig?.objects) {
+      sceneConfig.objects.forEach((obj: any) => {
+        result.push({
+          position: new THREE.Vector3(obj.position[0], obj.position[1], obj.position[2]),
+          label: obj.name || obj.type || 'object',
+          radius: obj.radius || obj.scale?.[0] || 0.5,
+          color: obj.color
+        })
+      })
+    }
+
+    return result
+  }, [editableObjects, sceneConfig])
+
+  // Memoize detection handler to prevent unnecessary re-renders
+  const handleDetectionsUpdate = useCallback((detections: any[]) => {
+    // Only log occasionally to avoid console spam
+    if (detections.length > 0 && Math.random() < 0.1) {
+      console.log('CV Detections:', detections.length)
+    }
+  }, [])
 
   if (!isVisible) return null
 
@@ -45,11 +92,14 @@ export default function CameraViewWindow({
       ? 'Waiting for 3D scene to initialize...'
       : 'Scene is loading content...'
 
-    console.log('🎥 FPV Camera waiting for scene:', {
-      sceneExists: !!scene,
-      sceneChildren: scene?.children?.length || 0,
-      reason
-    })
+    // Log only once per second to avoid spam
+    if (Date.now() % 1000 < 50) {
+      console.log('🎥 FPV Camera waiting for scene:', {
+        sceneExists: !!scene,
+        sceneChildren: scene?.children?.length || 0,
+        reason
+      })
+    }
 
     return (
       <div className="camera-view-window loading" style={{
@@ -69,34 +119,9 @@ export default function CameraViewWindow({
     )
   }
 
-  console.log('✅ FPV Camera scene ready, rendering CameraView')
-
-  // Convert objects to format expected by CameraView
-  const objects = editableObjects.map(obj => ({
-    position: new THREE.Vector3(obj.position[0], obj.position[1], obj.position[2]),
-    label: obj.type || 'object',
-    radius: obj.radius || (obj.size ? Math.max(...obj.size) / 2 : 0.5),
-    color: obj.color
-  }))
-
-  // Add scene config objects if present
-  if (sceneConfig?.objects) {
-    sceneConfig.objects.forEach((obj: any) => {
-      objects.push({
-        position: new THREE.Vector3(obj.position[0], obj.position[1], obj.position[2]),
-        label: obj.name || obj.type || 'object',
-        radius: obj.radius || obj.scale?.[0] || 0.5,
-        color: obj.color
-      })
-    })
-  }
-
-  const handleDetectionsUpdate = (detections: any[]) => {
-    console.log('CV Detections:', detections)
-  }
-
   return (
     <Draggable
+      nodeRef={nodeRef}
       position={position}
       onDrag={(e, data) => setPosition({ x: data.x, y: data.y })}
       onStart={() => setIsDragging(true)}
@@ -104,7 +129,7 @@ export default function CameraViewWindow({
       handle=".window-header"
       bounds="parent"
     >
-      <div className={`camera-view-window ${isMinimized ? 'minimized' : ''} ${isDragging ? 'dragging' : ''}`}>
+      <div ref={nodeRef} className={`camera-view-window ${isMinimized ? 'minimized' : ''} ${isDragging ? 'dragging' : ''}`}>
         <div className="window-header">
           <h4>🎥 Computer Vision Camera</h4>
           <div className="window-controls">
@@ -124,8 +149,8 @@ export default function CameraViewWindow({
           <div className="camera-viewport">
             <CameraView
               scene={scene}
-              robotPosition={new THREE.Vector3(robotPosition[0], robotPosition[1], robotPosition[2])}
-              robotRotation={new THREE.Euler(robotRotation[0], robotRotation[1], robotRotation[2])}
+              robotPosition={robotPositionVec}
+              robotRotation={robotRotationEuler}
               objects={objects}
               onDetectionsUpdate={handleDetectionsUpdate}
             />

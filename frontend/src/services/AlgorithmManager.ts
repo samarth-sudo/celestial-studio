@@ -65,7 +65,7 @@ export class AlgorithmManager {
         robot_type: robotType,
         algorithm_type: algorithmType
       }, {
-        timeout: 60000, // 60 second timeout (generation can take 10-20 seconds)
+        timeout: 120000, // 120 second timeout (complex algorithms like CV + obstacle avoidance can take longer)
         headers: {
           'Content-Type': 'application/json'
         }

@@ -46,18 +46,18 @@ class AlgorithmSearcher:
         query = f"{task_description} {robot_type} robot algorithm {year_filter} research paper"
 
         try:
-            # Search with Tavily
+            # Search with Tavily (using basic depth for faster response)
+            # Note: Tavily client has internal timeout handling
             response = self.client.search(
                 query=query,
-                search_depth="advanced",  # Deep search for academic content
-                max_results=5,
+                search_depth="basic",  # Changed from "advanced" for faster search (10-15s faster)
+                max_results=3,  # Reduced from 5 for faster response
                 include_domains=[
                     "arxiv.org",
-                    "ieee.org",
-                    "springer.com",
                     "github.com",
                     "paperswithcode.com"
-                ]
+                ],
+                timeout=15  # 15 second timeout to prevent blocking algorithm generation
             )
 
             papers = []

@@ -74,116 +74,221 @@ export default function CameraView({
   const lastAnalysisTimeRef = useRef(0)
   const fpsCounterRef = useRef({ frames: 0, lastTime: Date.now() })
 
-  // Initialize Three.js camera and renderer
+  // Track first render and mounted state to prevent crashes
+  const firstRenderRef = useRef(false)
+  const isMountedRef = useRef(true)
+  const initRetryCountRef = useRef(0)
+  const MAX_INIT_RETRIES = 10
+
+  // Cleanup mounted ref on unmount
   useEffect(() => {
-    console.log('🚀 FPV CameraView mounting...', {
-      sceneProvided: !!scene,
-      sceneChildren: scene?.children?.length || 0,
-      robotPosition: robotPosition.toArray(),
-      robotRotation: robotRotation.toArray(),
-      containerExists: !!containerRef.current,
-      canvasExists: !!canvasRef.current
-    })
-
-    if (!containerRef.current || !canvasRef.current) {
-      console.error('❌ FPV mount failed: Missing container or canvas')
-      return
-    }
-
-    if (!scene) {
-      console.warn('⚠️ FPV mount warning: Scene is null - waiting for scene...')
-      return
-    }
-
-    // Create camera (robot's perspective)
-    const camera = new THREE.PerspectiveCamera(
-      75, // FOV
-      containerRef.current.clientWidth / containerRef.current.clientHeight,
-      0.01, // Very close near plane to see nearby objects
-      100 // Reasonable far plane
-    )
-    cameraRef.current = camera
-
-    console.log('🎥 FPV Camera initialized:', {
-      fov: 75,
-      aspect: camera.aspect,
-      near: 0.01,
-      far: 100,
-      containerSize: {
-        width: containerRef.current.clientWidth,
-        height: containerRef.current.clientHeight
-      }
-    })
-
-    // Create renderer
-    const renderer = new THREE.WebGLRenderer({
-      canvas: canvasRef.current,
-      antialias: true,
-      alpha: true,
-      preserveDrawingBuffer: true // Needed for capturing frames
-    })
-    renderer.setSize(containerRef.current.clientWidth, containerRef.current.clientHeight)
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)) // Cap at 2x for performance
-    renderer.setClearColor(0x87CEEB, 1) // Sky blue background instead of black
-    renderer.shadowMap.enabled = true
-    rendererRef.current = renderer
-
-    // Add WebGL context loss handlers to prevent crashes
-    const canvas = canvasRef.current
-    const handleContextLost = (event: Event) => {
-      event.preventDefault()
-      console.warn('⚠️ FPV WebGL context lost - pausing rendering')
-    }
-    const handleContextRestored = () => {
-      console.log('✅ FPV WebGL context restored - resuming rendering')
-      // Renderer will automatically resume in next animation frame
-    }
-    canvas.addEventListener('webglcontextlost', handleContextLost)
-    canvas.addEventListener('webglcontextrestored', handleContextRestored)
-
-    // Create render target for capturing frames
-    const renderTarget = new THREE.WebGLRenderTarget(
-      containerRef.current.clientWidth,
-      containerRef.current.clientHeight,
-      {
-        minFilter: THREE.LinearFilter,
-        magFilter: THREE.LinearFilter,
-        format: THREE.RGBAFormat
-      }
-    )
-    renderTargetRef.current = renderTarget
-
-    // Handle window resize
-    const handleResize = () => {
-      if (!containerRef.current || !camera || !renderer || !renderTarget) return
-
-      const width = containerRef.current.clientWidth
-      const height = containerRef.current.clientHeight
-
-      camera.aspect = width / height
-      camera.updateProjectionMatrix()
-
-      renderer.setSize(width, height)
-      renderTarget.setSize(width, height)
-
-      if (overlayCanvasRef.current) {
-        overlayCanvasRef.current.width = width
-        overlayCanvasRef.current.height = height
-      }
-    }
-
-    window.addEventListener('resize', handleResize)
-    handleResize()
-
+    isMountedRef.current = true
+    initRetryCountRef.current = 0
     return () => {
-      window.removeEventListener('resize', handleResize)
-      canvas.removeEventListener('webglcontextlost', handleContextLost)
-      canvas.removeEventListener('webglcontextrestored', handleContextRestored)
+      isMountedRef.current = false
+    }
+  }, [])
+
+  // Initialize Three.js camera and renderer with retry logic
+  useEffect(() => {
+    let retryTimeout: ReturnType<typeof setTimeout> | null = null
+
+    // Store references to event handlers for proper cleanup
+    let handleResize: (() => void) | null = null
+    let handleContextLost: ((event: Event) => void) | null = null
+    let handleContextRestored: (() => void) | null = null
+    let canvasElement: HTMLCanvasElement | null = null
+
+    const initializeCamera = () => {
+      // Don't initialize if unmounted
+      if (!isMountedRef.current) return
+
+      console.log(`🚀 FPV CameraView initializing (attempt ${initRetryCountRef.current + 1}/${MAX_INIT_RETRIES})...`, {
+        sceneProvided: !!scene,
+        sceneChildren: scene?.children?.length || 0,
+        containerExists: !!containerRef.current,
+        canvasExists: !!canvasRef.current
+      })
+
+      // Check container and canvas
+      if (!containerRef.current || !canvasRef.current) {
+        if (initRetryCountRef.current < MAX_INIT_RETRIES) {
+          initRetryCountRef.current++
+          console.warn('⚠️ FPV: Missing container/canvas, retrying in 300ms...')
+          retryTimeout = setTimeout(initializeCamera, 300)
+        } else {
+          console.error('❌ FPV mount failed after max retries: Missing container or canvas')
+        }
+        return
+      }
+
+      // Validate container dimensions
+      const containerWidth = containerRef.current.clientWidth
+      const containerHeight = containerRef.current.clientHeight
+
+      if (containerWidth < 50 || containerHeight < 50) {
+        if (initRetryCountRef.current < MAX_INIT_RETRIES) {
+          initRetryCountRef.current++
+          console.warn(`⚠️ FPV: Container too small (${containerWidth}x${containerHeight}), retrying in 300ms...`)
+          retryTimeout = setTimeout(initializeCamera, 300)
+        } else {
+          console.error('❌ FPV mount failed after max retries: Container too small')
+        }
+        return
+      }
+
+      // Check scene is ready with content
+      if (!scene || !scene.children || scene.children.length === 0) {
+        if (initRetryCountRef.current < MAX_INIT_RETRIES) {
+          initRetryCountRef.current++
+          console.warn('⚠️ FPV: Scene not ready, retrying in 300ms...')
+          retryTimeout = setTimeout(initializeCamera, 300)
+        } else {
+          console.error('❌ FPV mount failed after max retries: Scene not ready')
+        }
+        return
+      }
+
+      // SUCCESS - all prerequisites met, initialize camera and renderer
+      console.log('✅ FPV prerequisites met, initializing...')
+
+      // Create camera (robot's perspective)
+      const camera = new THREE.PerspectiveCamera(
+        75, // FOV
+        containerWidth / containerHeight,
+        0.01, // Very close near plane
+        100 // Reasonable far plane
+      )
+      cameraRef.current = camera
+
+      console.log('🎥 FPV Camera initialized:', {
+        fov: 75,
+        aspect: camera.aspect,
+        containerSize: { width: containerWidth, height: containerHeight }
+      })
+
+      // Create renderer with robust options
+      const renderer = new THREE.WebGLRenderer({
+        canvas: canvasRef.current,
+        antialias: true,
+        alpha: true,
+        preserveDrawingBuffer: true,
+        failIfMajorPerformanceCaveat: false // Don't fail on low-end GPUs
+      })
+      renderer.setSize(containerWidth, containerHeight)
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+      renderer.setClearColor(0x87CEEB, 1) // Sky blue background
+      renderer.shadowMap.enabled = true
+      rendererRef.current = renderer
+
+      // Store canvas reference for cleanup
+      canvasElement = canvasRef.current
+
+      // Add WebGL context loss handlers (store references for cleanup)
+      handleContextLost = (event: Event) => {
+        event.preventDefault()
+        console.warn('⚠️ FPV WebGL context lost - pausing rendering')
+        if (animationFrameRef.current) {
+          cancelAnimationFrame(animationFrameRef.current)
+          animationFrameRef.current = null
+        }
+      }
+      handleContextRestored = () => {
+        console.log('✅ FPV WebGL context restored - will restart on next scene change')
+        // Force a re-render by resetting the first render flag
+        firstRenderRef.current = false
+      }
+      canvasElement.addEventListener('webglcontextlost', handleContextLost)
+      canvasElement.addEventListener('webglcontextrestored', handleContextRestored)
+
+      // Create render target for capturing frames
+      const renderTarget = new THREE.WebGLRenderTarget(
+        containerWidth,
+        containerHeight,
+        {
+          minFilter: THREE.LinearFilter,
+          magFilter: THREE.LinearFilter,
+          format: THREE.RGBAFormat
+        }
+      )
+      renderTargetRef.current = renderTarget
+
+      // Initialize overlay canvas dimensions
+      if (overlayCanvasRef.current) {
+        overlayCanvasRef.current.width = containerWidth
+        overlayCanvasRef.current.height = containerHeight
+      }
+
+      // Handle window resize (store reference for cleanup)
+      handleResize = () => {
+        if (!containerRef.current || !camera || !renderer || !renderTarget) return
+
+        const width = containerRef.current.clientWidth
+        const height = containerRef.current.clientHeight
+
+        if (width < 50 || height < 50) return // Skip invalid sizes
+
+        camera.aspect = width / height
+        camera.updateProjectionMatrix()
+
+        renderer.setSize(width, height)
+        renderTarget.setSize(width, height)
+
+        if (overlayCanvasRef.current) {
+          overlayCanvasRef.current.width = width
+          overlayCanvasRef.current.height = height
+        }
+      }
+
+      window.addEventListener('resize', handleResize)
+    } // End of initializeCamera function
+
+    // Start initialization
+    initializeCamera()
+
+    // Cleanup function - properly removes all event listeners
+    return () => {
+      console.log('🧹 FPV initialization cleanup starting...')
+
+      // Clear any pending retry timeouts
+      if (retryTimeout) {
+        clearTimeout(retryTimeout)
+      }
+
+      // Remove resize listener (using stored reference)
+      if (handleResize) {
+        window.removeEventListener('resize', handleResize)
+        console.log('  ✓ Removed resize listener')
+      }
+
+      // Remove WebGL context listeners (using stored references)
+      if (canvasElement) {
+        if (handleContextLost) {
+          canvasElement.removeEventListener('webglcontextlost', handleContextLost)
+        }
+        if (handleContextRestored) {
+          canvasElement.removeEventListener('webglcontextrestored', handleContextRestored)
+        }
+        console.log('  ✓ Removed WebGL context listeners')
+      }
+
+      // Cleanup WebGL resources
+      if (rendererRef.current) {
+        rendererRef.current.dispose()
+        rendererRef.current = null
+        console.log('  ✓ Disposed renderer')
+      }
+      if (renderTargetRef.current) {
+        renderTargetRef.current.dispose()
+        renderTargetRef.current = null
+        console.log('  ✓ Disposed render target')
+      }
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current)
+        animationFrameRef.current = null
       }
-      renderer.dispose()
-      renderTarget.dispose()
+
+      console.log('✅ FPV initialization cleanup complete')
     }
   }, [scene]) // Re-run when scene becomes available
 
@@ -272,53 +377,57 @@ export default function CameraView({
     return detections
   }, [objects])
 
-  // Update tracking trails
+  // Update tracking trails - uses functional update to avoid stale closure
   const updateTrackingTrails = useCallback((currentDetections: Detection[]) => {
     const now = Date.now()
-    const newTrails = new Map(trackingTrails)
 
-    currentDetections.forEach(detection => {
-      const key = detection.label
-      const trail = newTrails.get(key)
+    // Use functional update pattern to always get latest state
+    setTrackingTrails(prevTrails => {
+      const newTrails = new Map(prevTrails)
 
-      if (trail) {
-        // Add new position to existing trail
-        trail.positions.push({
-          x: detection.bbox.x + detection.bbox.width / 2,
-          y: detection.bbox.y + detection.bbox.height / 2,
-          timestamp: now
-        })
+      currentDetections.forEach(detection => {
+        const key = detection.label
+        const trail = newTrails.get(key)
 
-        // Keep only last 30 positions (2 seconds at 15 FPS)
-        if (trail.positions.length > 30) {
-          trail.positions = trail.positions.slice(-30)
-        }
-      } else {
-        // Create new trail
-        const color = `hsl(${Math.random() * 360}, 70%, 50%)`
-        newTrails.set(key, {
-          positions: [{
+        if (trail) {
+          // Add new position to existing trail
+          trail.positions.push({
             x: detection.bbox.x + detection.bbox.width / 2,
             y: detection.bbox.y + detection.bbox.height / 2,
             timestamp: now
-          }],
-          label: key,
-          color
-        })
-      }
-    })
+          })
 
-    // Remove old trails (no update for 3 seconds)
-    const trailTimeout = 3000
-    newTrails.forEach((trail, key) => {
-      const lastPosition = trail.positions[trail.positions.length - 1]
-      if (now - lastPosition.timestamp > trailTimeout) {
-        newTrails.delete(key)
-      }
-    })
+          // Keep only last 30 positions (2 seconds at 15 FPS)
+          if (trail.positions.length > 30) {
+            trail.positions = trail.positions.slice(-30)
+          }
+        } else {
+          // Create new trail
+          const color = `hsl(${Math.random() * 360}, 70%, 50%)`
+          newTrails.set(key, {
+            positions: [{
+              x: detection.bbox.x + detection.bbox.width / 2,
+              y: detection.bbox.y + detection.bbox.height / 2,
+              timestamp: now
+            }],
+            label: key,
+            color
+          })
+        }
+      })
 
-    setTrackingTrails(newTrails)
-  }, [trackingTrails])
+      // Remove old trails (no update for 3 seconds)
+      const trailTimeout = 3000
+      newTrails.forEach((trail, key) => {
+        const lastPosition = trail.positions[trail.positions.length - 1]
+        if (now - lastPosition.timestamp > trailTimeout) {
+          newTrails.delete(key)
+        }
+      })
+
+      return newTrails
+    })
+  }, []) // No dependencies needed with functional update!
 
   // Draw detection overlays on canvas
   const drawDetectionOverlay = useCallback((detections: Detection[]) => {
@@ -406,7 +515,7 @@ export default function CameraView({
 
   // Call vision API for scene understanding
   const analyzeWithVision = useCallback(async () => {
-    if (!canvasRef.current || isAnalyzing) return
+    if (!canvasRef.current || isAnalyzing || !isMountedRef.current) return
 
     const now = Date.now()
     // Throttle to max 1 call every 5 seconds
@@ -429,12 +538,18 @@ export default function CameraView({
         }
       )
 
-      setVisionAnalysis(response.data)
-      console.log('Vision analysis:', response.data)
+      // Only update state if still mounted
+      if (isMountedRef.current) {
+        setVisionAnalysis(response.data)
+        console.log('Vision analysis:', response.data)
+      }
     } catch (error) {
       console.error('Vision analysis error:', error)
     } finally {
-      setIsAnalyzing(false)
+      // Only update state if still mounted
+      if (isMountedRef.current) {
+        setIsAnalyzing(false)
+      }
     }
   }, [isAnalyzing])
 
@@ -442,36 +557,63 @@ export default function CameraView({
   useEffect(() => {
     if (!scene) return
 
+    // Store reference to scene for cleanup
+    const currentScene = scene
+    let addedAmbient: THREE.AmbientLight | null = null
+    let addedDirectional: THREE.DirectionalLight | null = null
+
     // Check if scene has adequate lighting
-    const lights = scene.children.filter(child => child instanceof THREE.Light)
+    const lights = currentScene.children.filter(child => child instanceof THREE.Light)
 
     if (lights.length === 0) {
-      console.warn('⚠️ No lights in scene, adding emergency ambient light for FPV')
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6)
-      ambientLight.name = 'FPV_Emergency_Ambient'
-      scene.add(ambientLight)
+      console.log('💡 No lights in scene, adding bright emergency lighting for FPV')
+      addedAmbient = new THREE.AmbientLight(0xffffff, 1.0) // Increased from 0.6
+      addedAmbient.name = 'FPV_Emergency_Ambient'
+      currentScene.add(addedAmbient)
 
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8)
-      directionalLight.position.set(5, 10, 5)
-      directionalLight.name = 'FPV_Emergency_Directional'
-      scene.add(directionalLight)
+      addedDirectional = new THREE.DirectionalLight(0xffffff, 1.2) // Increased from 0.8
+      addedDirectional.position.set(5, 15, 5) // Higher position for better coverage
+      addedDirectional.castShadow = true
+      addedDirectional.name = 'FPV_Emergency_Directional'
+      currentScene.add(addedDirectional)
+    }
 
-      return () => {
-        // Cleanup emergency lights
-        const ambient = scene.getObjectByName('FPV_Emergency_Ambient')
-        const directional = scene.getObjectByName('FPV_Emergency_Directional')
-        if (ambient) scene.remove(ambient)
-        if (directional) scene.remove(directional)
+    // Cleanup always runs when scene changes or component unmounts
+    return () => {
+      if (addedAmbient && currentScene) {
+        currentScene.remove(addedAmbient)
+      }
+      if (addedDirectional && currentScene) {
+        currentScene.remove(addedDirectional)
       }
     }
   }, [scene])
 
-  // Main render loop
+  // Main render loop with proper cleanup to prevent race conditions
   useEffect(() => {
+    // Local flag scoped to this effect - prevents race condition with cleanup
+    let isCleaned = false
+
     const animate = () => {
+      // Exit immediately if cleaned up - do NOT schedule another frame
+      if (isCleaned) {
+        console.log('🛑 FPV animation stopped (cleanup)')
+        return
+      }
+
       // Validate all required refs and scene before rendering
       if (!rendererRef.current || !cameraRef.current || !renderTargetRef.current || !scene) {
-        animationFrameRef.current = requestAnimationFrame(animate)
+        if (!isCleaned) {
+          animationFrameRef.current = requestAnimationFrame(animate)
+        }
+        return
+      }
+
+      // Check container dimensions are valid (can change during runtime)
+      if (!containerRef.current || containerRef.current.clientWidth <= 0 || containerRef.current.clientHeight <= 0) {
+        if (!isCleaned) {
+          animationFrameRef.current = requestAnimationFrame(animate)
+        }
         return
       }
 
@@ -479,15 +621,15 @@ export default function CameraView({
       const camera = cameraRef.current
 
       try {
-        // Log first render for debugging
-        if (!animate['firstRender']) {
+        // Log first render for debugging (using ref instead of function property)
+        if (!firstRenderRef.current) {
           console.log('🎥 FPV First render:', {
             cameraPosition: camera.position.toArray(),
             cameraRotation: camera.rotation.toArray(),
             sceneChildren: scene.children.length,
             rendererSize: { width: renderer.domElement.width, height: renderer.domElement.height }
           })
-          animate['firstRender'] = true
+          firstRenderRef.current = true
         }
 
         // Render scene to canvas
@@ -495,6 +637,9 @@ export default function CameraView({
 
         // Generate detections from current view
         const currentDetections = generateDetections()
+
+        // Only update state if not cleaned up
+        if (isCleaned) return
         setDetections(currentDetections)
         setDetectionCount(currentDetections.length)
 
@@ -521,7 +666,9 @@ export default function CameraView({
         fpsCounterRef.current.frames++
         const now = Date.now()
         if (now - fpsCounterRef.current.lastTime >= 1000) {
-          setFps(fpsCounterRef.current.frames)
+          if (!isCleaned) {
+            setFps(fpsCounterRef.current.frames)
+          }
           fpsCounterRef.current.frames = 0
           fpsCounterRef.current.lastTime = now
         }
@@ -540,18 +687,28 @@ export default function CameraView({
           cameraExists: !!cameraRef.current,
           rendererExists: !!rendererRef.current
         })
-        // Continue animation loop even if render fails
+        // Continue animation loop even if render fails (unless cleaned up)
       }
 
-      animationFrameRef.current = requestAnimationFrame(animate)
+      // Only schedule next frame if not cleaned up
+      if (!isCleaned) {
+        animationFrameRef.current = requestAnimationFrame(animate)
+      }
     }
 
-    animate()
+    // Start the animation loop
+    animationFrameRef.current = requestAnimationFrame(animate)
 
+    // Cleanup function - set flag first, then cancel frame
     return () => {
+      console.log('🧹 FPV cleanup starting...')
+      isCleaned = true // Set flag FIRST to stop any pending animate calls
+
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current)
+        animationFrameRef.current = null
       }
+      console.log('✅ FPV cleanup complete')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     // Only re-run when scene changes. Callbacks are accessed via closure and always use latest version.

@@ -1,6 +1,6 @@
 .algorithm-debug-overlay {
   position: fixed;
-  top: 20px;
+  bottom: 120px;  /* Moved below simulation, above playback controls */
   right: 20px;
   background: rgba(0, 0, 0, 0.85);
   border: 1px solid rgba(255, 255, 255, 0.2);
