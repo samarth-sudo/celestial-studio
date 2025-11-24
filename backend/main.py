@@ -2093,6 +2093,33 @@ async def genesis_status():
     }
 
 
+@app.get("/api/genesis/models")
+async def genesis_available_models():
+    """Get all available robot models from local assets"""
+    if not GENESIS_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Genesis not available"
+        )
+
+    try:
+        from genesis_service import GenesisSimulation
+        models = GenesisSimulation.discover_available_models()
+
+        return {
+            "status": "success",
+            "models": models,
+            "total_urdf": len(models["urdf"]),
+            "total_xml": len(models["xml"]),
+        }
+    except Exception as e:
+        logger.error(f"Failed to discover models: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to discover models: {str(e)}"
+        )
+
+
 @app.post("/api/genesis/init")
 async def genesis_init(request: GenesisInitRequest):
     """Initialize Genesis simulation with configuration"""

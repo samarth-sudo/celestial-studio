@@ -99,6 +99,9 @@ class GenesisSimulation:
     Handles scene creation, robot control, physics stepping, and rendering
     """
 
+    # Path to local robot model assets
+    ASSETS_DIR = Path(__file__).parent / "genesis_assets"
+
     def __init__(self, config: GenesisConfig):
         self.config = config
         self.scene: Optional[gs.Scene] = None
@@ -211,6 +214,51 @@ class GenesisSimulation:
         self.is_initialized = True
         logger.info("✅ Genesis initialized successfully")
 
+    @classmethod
+    def discover_available_models(cls) -> Dict[str, List[Dict[str, str]]]:
+        """
+        Discover all available robot models in the local assets directory
+
+        Returns:
+            Dictionary with categories (urdf, xml) and model information
+        """
+        models = {
+            "urdf": [],
+            "xml": [],
+        }
+
+        # Discover URDF models
+        urdf_dir = cls.ASSETS_DIR / "urdf"
+        if urdf_dir.exists():
+            for model_dir in urdf_dir.iterdir():
+                if model_dir.is_dir():
+                    # Look for .urdf files
+                    urdf_files = list(model_dir.rglob("*.urdf"))
+                    for urdf_file in urdf_files:
+                        models["urdf"].append({
+                            "name": model_dir.name,
+                            "path": str(urdf_file.relative_to(cls.ASSETS_DIR)),
+                            "full_path": str(urdf_file),
+                            "type": "urdf"
+                        })
+
+        # Discover MJCF/XML models
+        xml_dir = cls.ASSETS_DIR / "xml"
+        if xml_dir.exists():
+            for model_dir in xml_dir.iterdir():
+                if model_dir.is_dir():
+                    # Look for .xml files
+                    xml_files = list(model_dir.glob("*.xml"))
+                    for xml_file in xml_files:
+                        models["xml"].append({
+                            "name": model_dir.name,
+                            "path": str(xml_file.relative_to(cls.ASSETS_DIR)),
+                            "full_path": str(xml_file),
+                            "type": "mjcf"
+                        })
+
+        return models
+
     def add_robot(self, robot_id: str, robot_type: RobotType, position: Tuple[float, float, float] = (0, 0, 0.5)) -> Any:
         """Add a robot to the scene"""
         if not self.is_initialized:
@@ -233,27 +281,39 @@ class GenesisSimulation:
             robot = self._create_drone(position)
 
         elif robot_type == RobotType.FRANKA:
-            # Load Franka Panda from MJCF
+            # Load Franka Panda from local MJCF assets
             try:
-                robot = self.scene.add_entity(
-                    gs.morphs.MJCF(
-                        file="xml/franka_emika_panda/panda.xml",
-                        pos=position,
+                franka_path = self.ASSETS_DIR / "xml" / "franka_emika_panda" / "panda.xml"
+                if franka_path.exists():
+                    robot = self.scene.add_entity(
+                        gs.morphs.MJCF(
+                            file=str(franka_path),
+                            pos=position,
+                        )
                     )
-                )
+                    logger.info(f"✅ Loaded Franka Panda from {franka_path}")
+                else:
+                    logger.warning(f"Franka model not found at {franka_path}, falling back to simple arm")
+                    robot = self._create_robotic_arm(position)
             except Exception as e:
                 logger.warning(f"Could not load Franka model: {e}, falling back to simple arm")
                 robot = self._create_robotic_arm(position)
 
         elif robot_type == RobotType.GO2:
-            # Load Unitree Go2 quadruped
+            # Load Unitree Go2 quadruped from local URDF assets
             try:
-                robot = self.scene.add_entity(
-                    gs.morphs.MJCF(
-                        file="xml/unitree_go2/go2.xml",
-                        pos=position,
+                go2_path = self.ASSETS_DIR / "urdf" / "go2" / "urdf" / "go2.urdf"
+                if go2_path.exists():
+                    robot = self.scene.add_entity(
+                        gs.morphs.URDF(
+                            file=str(go2_path),
+                            pos=position,
+                        )
                     )
-                )
+                    logger.info(f"✅ Loaded Go2 quadruped from {go2_path}")
+                else:
+                    logger.warning(f"Go2 model not found at {go2_path}")
+                    robot = None
             except Exception as e:
                 logger.warning(f"Could not load Go2 model: {e}")
                 robot = None
@@ -292,8 +352,23 @@ class GenesisSimulation:
         return robot
 
     def _create_drone(self, position: Tuple[float, float, float]) -> Any:
-        """Create a quadcopter drone"""
-        # TODO: Create proper URDF with propellers
+        """Create a quadcopter drone (Crazyflie)"""
+        # Try to load Crazyflie drone from local assets
+        try:
+            drone_path = self.ASSETS_DIR / "urdf" / "drones" / "cf2x.urdf"
+            if drone_path.exists():
+                robot = self.scene.add_entity(
+                    gs.morphs.URDF(
+                        file=str(drone_path),
+                        pos=position,
+                    )
+                )
+                logger.info(f"✅ Loaded Crazyflie drone from {drone_path}")
+                return robot
+        except Exception as e:
+            logger.warning(f"Could not load drone model: {e}, falling back to simple sphere")
+
+        # Fallback to simple sphere
         robot = self.scene.add_entity(
             gs.morphs.Sphere(
                 pos=position,
