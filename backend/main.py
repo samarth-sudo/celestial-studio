@@ -293,6 +293,8 @@ async def generate_algorithm(request: GenerateAlgorithmRequest):
             "algorithm_type": result.algorithm_type,
             "description": result.description,
             "complexity": result.estimated_complexity,
+            "function_name": result.function_name,  # Required function name
+            "function_signature": result.function_signature,  # Function signature info
             "status": "success"
         }
 
@@ -1994,6 +1996,428 @@ async def list_trained_models():
     except Exception as e:
         print(f"❌ Model list error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# GENESIS SIMULATION API
+# ============================================================================
+
+# Import Genesis modules
+try:
+    from genesis_service import (
+        GenesisSimulation,
+        GenesisConfig,
+        BackendType,
+        RobotType,
+        get_simulation,
+        reset_simulation,
+    )
+    from genesis_renderer import (
+        VideoStreamer,
+        StreamConfig,
+        StreamQuality,
+    )
+    GENESIS_AVAILABLE = True
+except ImportError:
+    try:
+        from backend.genesis_service import (
+            GenesisSimulation,
+            GenesisConfig,
+            BackendType,
+            RobotType,
+            get_simulation,
+            reset_simulation,
+        )
+        from backend.genesis_renderer import (
+            VideoStreamer,
+            StreamConfig,
+            StreamQuality,
+        )
+        GENESIS_AVAILABLE = True
+    except ImportError:
+        GENESIS_AVAILABLE = False
+        print("⚠️  Genesis not available - install with: pip install genesis-world")
+
+from fastapi import WebSocket, WebSocketDisconnect
+
+# Global video streamer
+_video_streamer: Optional[VideoStreamer] = None
+
+
+class GenesisInitRequest(BaseModel):
+    """Request to initialize Genesis simulation"""
+    backend: str = "auto"  # auto, metal, cuda, cpu, vulkan
+    fps: int = 60
+    render_width: int = 1920
+    render_height: int = 1080
+    stream_quality: str = "medium"  # draft, medium, high, ultra
+
+
+class RobotAddRequest(BaseModel):
+    """Request to add a robot to the simulation"""
+    robot_id: str
+    robot_type: str  # mobile, arm, drone, franka, go2
+    position: List[float] = [0, 0, 0.5]
+
+
+class ObstacleAddRequest(BaseModel):
+    """Request to add an obstacle to the simulation"""
+    obstacle_id: str
+    position: List[float]
+    size: List[float]
+
+
+class SimulationControlRequest(BaseModel):
+    """Request to control simulation"""
+    action: str  # start, stop, reset, step
+
+
+@app.get("/api/genesis/status")
+async def genesis_status():
+    """Check if Genesis is available and get status"""
+    if not GENESIS_AVAILABLE:
+        return {
+            "available": False,
+            "message": "Genesis not installed. Install with: pip install genesis-world"
+        }
+
+    sim = get_simulation()
+
+    return {
+        "available": True,
+        "initialized": sim.is_initialized,
+        "running": sim.is_running,
+        "step_count": sim.step_count,
+        "robot_count": len(sim.robots),
+        "obstacle_count": len(sim.obstacles),
+    }
+
+
+@app.post("/api/genesis/init")
+async def genesis_init(request: GenesisInitRequest):
+    """Initialize Genesis simulation with configuration"""
+    if not GENESIS_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Genesis not available"
+        )
+
+    try:
+        # Parse backend type
+        backend_map = {
+            "auto": BackendType.METAL,  # Will auto-detect
+            "metal": BackendType.METAL,
+            "cuda": BackendType.CUDA,
+            "cpu": BackendType.CPU,
+            "vulkan": BackendType.VULKAN,
+        }
+        backend = backend_map.get(request.backend.lower(), BackendType.METAL)
+
+        # Parse quality
+        quality_map = {
+            "draft": StreamQuality.DRAFT,
+            "medium": StreamQuality.MEDIUM,
+            "high": StreamQuality.HIGH,
+            "ultra": StreamQuality.ULTRA,
+        }
+        quality = quality_map.get(request.stream_quality.lower(), StreamQuality.MEDIUM)
+
+        # Create config
+        config = GenesisConfig(
+            backend=backend,
+            fps=request.fps,
+            render_width=request.render_width,
+            render_height=request.render_height,
+            show_viewer=False,  # Headless mode
+        )
+
+        # Reset existing simulation if any
+        reset_simulation()
+
+        # Create new simulation
+        sim = get_simulation(config)
+        sim.initialize()
+
+        # Initialize video streamer
+        global _video_streamer
+        stream_config = StreamConfig.from_quality(quality)
+        _video_streamer = VideoStreamer(stream_config)
+        _video_streamer.start()
+
+        print(f"✅ Genesis initialized with {backend.value} backend")
+
+        return {
+            "status": "success",
+            "message": "Genesis initialized",
+            "backend": backend.value,
+            "config": {
+                "fps": config.fps,
+                "resolution": f"{config.render_width}x{config.render_height}",
+                "quality": request.stream_quality,
+            }
+        }
+
+    except Exception as e:
+        print(f"❌ Genesis initialization error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/genesis/robot/add")
+async def genesis_add_robot(request: RobotAddRequest):
+    """Add a robot to the Genesis simulation"""
+    if not GENESIS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Genesis not available")
+
+    try:
+        sim = get_simulation()
+
+        # Parse robot type
+        robot_type_map = {
+            "mobile": RobotType.MOBILE_ROBOT,
+            "arm": RobotType.ROBOTIC_ARM,
+            "drone": RobotType.DRONE,
+            "franka": RobotType.FRANKA,
+            "go2": RobotType.GO2,
+        }
+        robot_type = robot_type_map.get(request.robot_type.lower(), RobotType.MOBILE_ROBOT)
+
+        # Add robot
+        robot = sim.add_robot(
+            robot_id=request.robot_id,
+            robot_type=robot_type,
+            position=tuple(request.position)
+        )
+
+        if robot is None:
+            raise HTTPException(status_code=500, detail="Failed to create robot")
+
+        print(f"✅ Added robot: {request.robot_id} ({request.robot_type})")
+
+        return {
+            "status": "success",
+            "robot_id": request.robot_id,
+            "robot_type": request.robot_type,
+            "position": request.position,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Add robot error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/genesis/obstacle/add")
+async def genesis_add_obstacle(request: ObstacleAddRequest):
+    """Add an obstacle to the Genesis simulation"""
+    if not GENESIS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Genesis not available")
+
+    try:
+        sim = get_simulation()
+
+        obstacle = sim.add_obstacle(
+            obstacle_id=request.obstacle_id,
+            position=tuple(request.position),
+            size=tuple(request.size)
+        )
+
+        print(f"✅ Added obstacle: {request.obstacle_id}")
+
+        return {
+            "status": "success",
+            "obstacle_id": request.obstacle_id,
+            "position": request.position,
+            "size": request.size,
+        }
+
+    except Exception as e:
+        print(f"❌ Add obstacle error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/genesis/scene/build")
+async def genesis_build_scene():
+    """Build the Genesis scene (required before running simulation)"""
+    if not GENESIS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Genesis not available")
+
+    try:
+        sim = get_simulation()
+        sim.build_scene()
+
+        print("✅ Genesis scene built")
+
+        return {
+            "status": "success",
+            "message": "Scene built successfully",
+            "robot_count": len(sim.robots),
+            "obstacle_count": len(sim.obstacles),
+        }
+
+    except Exception as e:
+        print(f"❌ Build scene error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/genesis/control")
+async def genesis_control(request: SimulationControlRequest):
+    """Control simulation (start, stop, reset, step)"""
+    if not GENESIS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Genesis not available")
+
+    try:
+        sim = get_simulation()
+
+        if request.action == "start":
+            sim.start()
+            message = "Simulation started"
+        elif request.action == "stop":
+            sim.stop()
+            message = "Simulation stopped"
+        elif request.action == "reset":
+            sim.reset()
+            message = "Simulation reset"
+        elif request.action == "step":
+            state = sim.step()
+            return {
+                "status": "success",
+                "action": "step",
+                "state": state,
+            }
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown action: {request.action}")
+
+        print(f"✅ {message}")
+
+        return {
+            "status": "success",
+            "action": request.action,
+            "message": message,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Control error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/genesis/stream/frame")
+async def genesis_get_frame():
+    """Get latest frame as JPEG"""
+    if not GENESIS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Genesis not available")
+
+    global _video_streamer
+
+    if _video_streamer is None:
+        raise HTTPException(status_code=400, detail="Video streamer not initialized")
+
+    try:
+        sim = get_simulation()
+
+        # Get latest frame from simulation
+        if sim.last_frame is not None and _video_streamer is not None:
+            _video_streamer.add_frame(sim.last_frame)
+            jpeg_bytes = _video_streamer.get_latest_frame_jpeg()
+
+            if jpeg_bytes is not None:
+                return StreamingResponse(
+                    io.BytesIO(jpeg_bytes),
+                    media_type="image/jpeg"
+                )
+
+        raise HTTPException(status_code=404, detail="No frame available")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Get frame error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/genesis/stream/stats")
+async def genesis_stream_stats():
+    """Get video streaming statistics"""
+    if not GENESIS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Genesis not available")
+
+    global _video_streamer
+
+    if _video_streamer is None:
+        return {"status": "not_initialized"}
+
+    try:
+        stats = _video_streamer.get_stats()
+
+        return {
+            "status": "running",
+            "stats": stats,
+        }
+
+    except Exception as e:
+        print(f"❌ Get stats error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.websocket("/api/genesis/ws")
+async def genesis_websocket(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time state updates
+    Sends simulation state and receives control commands
+    """
+    if not GENESIS_AVAILABLE:
+        await websocket.close(code=1003, reason="Genesis not available")
+        return
+
+    try:
+        sim = get_simulation()
+        await sim.add_websocket_client(websocket)
+
+        print("🔌 WebSocket client connected")
+
+        # Keep connection alive and handle incoming messages
+        while True:
+            try:
+                # Receive message from client
+                data = await websocket.receive_json()
+
+                # Handle different message types
+                msg_type = data.get('type')
+
+                if msg_type == 'control':
+                    # Control simulation
+                    action = data.get('action')
+                    if action == 'start':
+                        sim.start()
+                    elif action == 'stop':
+                        sim.stop()
+                    elif action == 'reset':
+                        sim.reset()
+
+                elif msg_type == 'get_frame':
+                    # Send latest frame
+                    frame_base64 = sim.get_frame_base64()
+                    if frame_base64:
+                        await websocket.send_json({
+                            'type': 'frame',
+                            'data': frame_base64
+                        })
+
+                elif msg_type == 'ping':
+                    # Respond to ping
+                    await websocket.send_json({'type': 'pong'})
+
+            except WebSocketDisconnect:
+                print("🔌 WebSocket client disconnected")
+                break
+            except Exception as e:
+                print(f"⚠️  WebSocket error: {e}")
+                break
+
+    finally:
+        sim.remove_websocket_client(websocket)
 
 
 if __name__ == "__main__":

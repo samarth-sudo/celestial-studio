@@ -1,9 +1,11 @@
 """
-Algorithm Generator Module for Celestial Studio
+Algorithm Generator Module for Celestial Studio - FIXED VERSION
 
-Uses Qwen 2.5 Coder to dynamically generate TypeScript algorithm code
-from natural language descriptions. Supports real-time modification and
-parameter extraction.
+Key improvements:
+1. Enforces standardized function names
+2. Validates function signatures
+3. Returns function metadata
+4. Includes interface definitions in prompts
 """
 
 import requests
@@ -17,323 +19,357 @@ try:
 except ImportError:
     from backend.code_validator import validate_code, ValidationResult
 
-try:
-    from utils.algorithm_search import search_latest_algorithms
-except ImportError:
-    from backend.utils.algorithm_search import search_latest_algorithms
-
 
 @dataclass
 class AlgorithmRequest:
     """Request for algorithm generation"""
-    description: str  # Natural language description
-    robot_type: str  # 'mobile', 'arm', 'drone'
-    algorithm_type: str  # 'path_planning', 'obstacle_avoidance', 'inverse_kinematics', 'computer_vision'
-    current_code: Optional[str] = None  # For modifications
-    modification_request: Optional[str] = None  # "Make it faster", "Add safety margin", etc.
-    use_web_search: bool = False  # Disabled by default for faster generation (web search adds 10-30s delay)
+    description: str
+    robot_type: str
+    algorithm_type: str
+    current_code: Optional[str] = None
+    modification_request: Optional[str] = None
+    use_web_search: bool = False
 
 
 @dataclass
 class AlgorithmResponse:
     """Generated algorithm with metadata"""
-    code: str  # TypeScript/JavaScript code
-    parameters: List[Dict[str, any]]  # Extractable parameters for UI controls
+    code: str
+    parameters: List[Dict[str, any]]
     algorithm_type: str
     description: str
-    estimated_complexity: str  # O(n), O(n log n), etc.
+    estimated_complexity: str
+    function_name: str  # NEW: Primary function name
+    function_signature: Dict[str, any]  # NEW: Function signature info
+
+
+# Standardized function names by algorithm type (Python signatures for Genesis)
+REQUIRED_FUNCTIONS = {
+    'path_planning': {
+        'name': 'find_path',
+        'signature': '(start: np.ndarray, goal: np.ndarray, obstacles: List[Dict], robot_state: Dict) -> List[np.ndarray]'
+    },
+    'obstacle_avoidance': {
+        'name': 'compute_safe_velocity',
+        'signature': '(current_pos: np.ndarray, current_vel: np.ndarray, obstacles: List[Dict], goal: np.ndarray, max_speed: float, params: Dict) -> np.ndarray'
+    },
+    'inverse_kinematics': {
+        'name': 'solve_ik',
+        'signature': '(target_pos: np.ndarray, current_angles: np.ndarray, link_lengths: np.ndarray, params: Dict) -> np.ndarray'
+    },
+    'computer_vision': {
+        'name': 'process_vision',
+        'signature': '(camera_state: Dict, scene_objects: List[Dict], params: Dict) -> List[Dict]'
+    }
+}
 
 
 class AlgorithmGenerator:
     """Generates algorithm code using Qwen 2.5 Coder"""
 
     OLLAMA_URL = "http://localhost:11434/api/generate"
-    OLLAMA_MODEL = "qwen2.5-coder-robotics"  # Specialized robotics model with improved accuracy
+    OLLAMA_MODEL = "qwen2.5-coder-robotics"
 
     def __init__(self):
-        """Initialize the algorithm generator"""
         self.templates = self._load_templates()
 
-    def _load_templates(self) -> Dict[str, str]:
-        """Load algorithm templates for reference"""
-        return {
-            "path_planning": """
-// Path Planning Algorithm Template
-// Input: start position, goal position, obstacles
-// Output: array of waypoints
-
-interface PathPoint {
-  x: number
-  z: number
-}
-
-function findPath(
-  start: PathPoint,
-  goal: PathPoint,
-  obstacles: Array<{position: PathPoint, radius: number}>
-): PathPoint[] {
-  // Algorithm implementation here
-  // Should return array of waypoints from start to goal
-  return []
-}
-""",
-            "obstacle_avoidance": """
-// Obstacle Avoidance Algorithm Template
-// Input: current position, velocity, obstacles, goal
-// Output: safe velocity vector
-
-interface Vector2 {
-  x: number
-  z: number
-}
-
-function calculateSafeVelocity(
-  currentPos: Vector2,
-  currentVel: Vector2,
-  obstacles: Array<{position: Vector2, radius: number}>,
-  goal: Vector2,
-  maxSpeed: number
-): Vector2 {
-  // Algorithm implementation here
-  // Should return velocity vector that avoids obstacles
-  return { x: 0, z: 0 }
-}
-""",
-            "inverse_kinematics": """
-// Inverse Kinematics Algorithm Template
-// Input: target position, current joint angles
-// Output: joint angles to reach target
-
-interface JointAngles {
-  angles: number[]  // Radians for each joint
-}
-
-function solveIK(
-  targetPos: {x: number, y: number, z: number},
-  currentAngles: number[],
-  linkLengths: number[]
-): JointAngles {
-  // Algorithm implementation here
-  // Should return joint angles to reach target position
-  return { angles: currentAngles }
-}
-""",
-            "computer_vision": """
-// Computer Vision Algorithm Template
-// Input: camera state, scene objects
-// Output: visual detections/features/tracking data
-
-import * as THREE from 'three'
-
-interface CameraState {
-  position: THREE.Vector3
-  direction: THREE.Vector3
-  up: THREE.Vector3
-}
-
-interface Detection {
-  label: string
-  confidence: number
-  bbox: {x: number, y: number, width: number, height: number}
-  position3D: THREE.Vector3
-  distance: number
-}
-
-function processVision(
-  camera: CameraState,
-  objects: Array<{position: THREE.Vector3, label: string, radius: number}>,
-  params: {threshold: number, range: number}
-): Detection[] {
-  // Algorithm implementation here
-  // Should return visual analysis results
-  return []
-}
-"""
-        }
-
     def generate(self, request: AlgorithmRequest) -> AlgorithmResponse:
-        """
-        Generate algorithm code from natural language description
+        """Generate algorithm code from natural language description"""
+        try:
+            print(f"🔄 Generating {request.algorithm_type} algorithm...")
+            print(f"Description: \"{request.description}\"")
 
-        Args:
-            request: AlgorithmRequest with description and context
+            # Get required function info
+            required_func = REQUIRED_FUNCTIONS.get(request.algorithm_type)
+            if not required_func:
+                raise ValueError(f"Unknown algorithm type: {request.algorithm_type}")
 
-        Returns:
-            AlgorithmResponse with generated code and metadata
-        """
-        # Search for latest research if requested
-        research_context = ""
-        if request.use_web_search:
-            print(f"🔍 Searching for latest {request.algorithm_type} research...")
-            search_results = search_latest_algorithms(
-                task=request.description,
-                robot_type=request.robot_type,
-                use_web_search=True
+            # Build prompt with strict interface requirements
+            prompt = self._build_prompt(request, required_func)
+
+            # Generate code using Qwen
+            code = self._call_ollama(prompt)
+
+            # Validate that required function exists
+            validation = self._validate_function_exists(code, required_func['name'])
+            if not validation['valid']:
+                print(f"⚠️ Generated code missing required function: {required_func['name']}")
+                print(f"🔄 Attempting regeneration with stricter prompt...")
+                
+                # Try again with even stricter prompt
+                strict_prompt = prompt + f"\n\nCRITICAL: You MUST include a function named '{required_func['name']}' with signature: {required_func['signature']}"
+                code = self._call_ollama(strict_prompt, temperature=0.1)
+                
+                # Validate again
+                validation = self._validate_function_exists(code, required_func['name'])
+                if not validation['valid']:
+                    raise Exception(f"Generated code does not contain required function: {required_func['name']}")
+
+            # Extract parameters from generated code
+            parameters = self._extract_parameters(code)
+
+            # Estimate complexity
+            complexity = self._estimate_complexity(code)
+
+            return AlgorithmResponse(
+                code=code,
+                parameters=parameters,
+                algorithm_type=request.algorithm_type,
+                description=request.description,
+                estimated_complexity=complexity,
+                function_name=required_func['name'],  # NEW
+                function_signature=required_func  # NEW
             )
 
-            if search_results and search_results.get('papers'):
-                research_context = "\n\n--- Latest Research (2024-2025) ---\n"
-                for paper in search_results['papers']:
-                    research_context += f"\n• {paper['title']}\n  {paper['summary']}\n  Source: {paper['url']}\n"
+        except Exception as error:
+            print(f"❌ Algorithm generation failed: {error}")
+            raise
 
-                if search_results.get('techniques'):
-                    research_context += "\nRelevant Techniques:\n"
-                    for tech in search_results['techniques']:
-                        research_context += f"• {tech['name']}\n"
+    def _build_prompt(self, request: AlgorithmRequest, required_func: Dict) -> str:
+        """Build Qwen prompt with strict interface requirements for Python/Genesis"""
 
-                print(f"✅ Found {len(search_results['papers'])} recent papers")
-            else:
-                print(f"⚠️ No recent research found, using classical algorithms")
-
-        # Build prompt for Qwen
-        prompt = self._build_prompt(request, research_context)
-
-        # Generate code using Qwen
-        code = self._call_ollama(prompt)
-
-        # Validate generated code for safety
-        validation = validate_code(code, request.algorithm_type)
-
-        if not validation.is_valid:
-            # Code has critical errors - try regenerating once with stricter prompt
-            print(f"⚠️ Generated code has errors: {validation.errors}")
-            print(f"🔄 Attempting regeneration with stricter constraints...")
-
-            stricter_prompt = prompt + "\n\nIMPORTANT: Ensure code has no syntax errors and follows best practices."
-            code = self._call_ollama(stricter_prompt, temperature=0.1)
-
-            # Validate again
-            validation = validate_code(code, request.algorithm_type)
-
-            if not validation.is_valid:
-                raise Exception(f"Generated code validation failed: {', '.join(validation.errors)}")
-
-        # Log warnings if any
-        if validation.warnings:
-            print(f"⚠️ Code warnings: {validation.warnings[:3]}")  # Show first 3
-
-        # Extract parameters from generated code
-        parameters = self._extract_parameters(code)
-
-        # Estimate complexity
-        complexity = self._estimate_complexity(code)
-
-        return AlgorithmResponse(
-            code=code,
-            parameters=parameters,
-            algorithm_type=request.algorithm_type,
-            description=request.description,
-            estimated_complexity=complexity
-        )
-
-    def modify(self, current_code: str, modification: str, algorithm_type: str) -> AlgorithmResponse:
-        """
-        Modify existing algorithm code based on natural language request
-
-        Args:
-            current_code: Existing TypeScript algorithm code
-            modification: Natural language modification request
-            algorithm_type: Type of algorithm
-
-        Returns:
-            AlgorithmResponse with modified code
-        """
-        prompt = f"""You are modifying an existing algorithm. Make ONLY the requested changes.
-
-Current Code:
-```typescript
-{current_code}
-```
-
-Modification Request: {modification}
-
-Generate the COMPLETE modified TypeScript code. Include all necessary imports and type definitions.
-Output ONLY the code, no explanations."""
-
-        code = self._call_ollama(prompt)
-
-        # Validate modified code
-        validation = validate_code(code, algorithm_type)
-
-        if not validation.is_valid:
-            raise Exception(f"Modified code validation failed: {', '.join(validation.errors)}")
-
-        if validation.warnings:
-            print(f"⚠️ Modified code warnings: {validation.warnings[:2]}")
-
-        parameters = self._extract_parameters(code)
-        complexity = self._estimate_complexity(code)
-
-        return AlgorithmResponse(
-            code=code,
-            parameters=parameters,
-            algorithm_type=algorithm_type,
-            description=f"Modified: {modification}",
-            estimated_complexity=complexity
-        )
-
-    def _build_prompt(self, request: AlgorithmRequest, research_context: str = "") -> str:
-        """Build Qwen prompt for algorithm generation"""
-
-        # Get template for this algorithm type
+        robot_context = self._get_robot_context(request.robot_type)
         template = self.templates.get(request.algorithm_type, "")
 
-        # Build context based on robot type
-        robot_context = self._get_robot_context(request.robot_type)
-
-        # If modifying existing code
-        if request.current_code and request.modification_request:
-            return f"""You are modifying an existing {request.algorithm_type} algorithm.
-
-Current Code:
-```typescript
-{request.current_code}
-```
-
-Modification Request: {request.modification_request}
-
-Generate the COMPLETE modified TypeScript code with all improvements.
-Output ONLY the code, no explanations."""
-
-        # New algorithm generation
-        prompt = f"""You are an expert robotics algorithm engineer. Generate a TypeScript algorithm for {request.algorithm_type}.
+        prompt = f"""You are an expert robotics algorithm engineer. Generate a Python algorithm for {request.algorithm_type} that will run in the Genesis physics engine.
 
 Robot Type: {request.robot_type}
 {robot_context}
 
 Task: {request.description}
 
+CRITICAL REQUIREMENTS:
+1. You MUST implement a function named: {required_func['name']}
+2. Function signature MUST match: {required_func['signature']}
+3. Use proper Python type hints (numpy arrays, List, Dict)
+4. Include configurable parameters as module-level variables
+5. Add clear inline comments
+6. Handle edge cases and errors
+7. Optimize for real-time performance in Genesis simulation loop
+8. Use numpy for all vector/matrix operations
+9. The function will be called every simulation step
+
+REQUIRED FUNCTION:
+def {required_func['name']}{required_func['signature']}:
+    \"\"\"
+    {request.description}
+
+    Args:
+        [document parameters here]
+
+    Returns:
+        [document return value]
+    \"\"\"
+    # Your implementation here
+    pass
+
+REQUIRED IMPORTS:
+import numpy as np
+from typing import List, Dict, Tuple, Optional
+
+CONFIGURABLE PARAMETERS (at module level):
+# Example: SPEED_LIMIT = 2.0  # Maximum speed in m/s
+# These will be exposed to the UI for real-time tuning
+
 Template Structure:
 {template}
-{research_context}
-
-Requirements:
-1. Generate PRODUCTION-READY TypeScript code
-2. Use proper type annotations
-3. Include configurable parameters as constants at the top
-4. Add clear inline comments explaining the algorithm
-5. Handle edge cases and errors
-6. Optimize for real-time performance (this runs in browser at 60 FPS)
-7. Use efficient data structures (typed arrays when possible)
-8. Follow the template structure
-{"9. If latest research papers are provided above, incorporate modern techniques where applicable" if research_context else ""}
 
 Algorithm Guidelines:
-- For path planning: Use A*, RRT, Dijkstra (shortest path), or Longest Path variant based on the task
-  * Shortest path: A*, Dijkstra, RRT for optimal/fast routes
-  * Longest path: Inverted heuristic, maximize distance, avoid cycles, scenic routes
-- For obstacle avoidance: Use DWA, APF, or VFH based on the task
-- For inverse kinematics: Use FABRIK, CCD, or Jacobian based on the task
-- For computer vision: Choose appropriate algorithm:
-  * Object detection: YOLO-style detection with bounding boxes
-  * Object tracking: Kalman filter or tracking-by-detection
-  * Feature detection: Corner detection, SIFT-like features
-  * Optical flow: Lucas-Kanade or dense flow estimation
-  * Semantic segmentation: Region-based or pixel-wise classification
+- For path planning: Use A*, RRT, Dijkstra, or PRM based on the task
+- For obstacle avoidance: Use DWA, APF, VFH, or potential fields based on the task
+- For inverse kinematics: Use FABRIK, CCD, Jacobian, or analytical solutions based on the task
+- For computer vision: Choose appropriate CV algorithm for the task
 
-Output ONLY the complete TypeScript code. No explanations, no markdown formatting."""
+Genesis Integration Notes:
+- Robot state includes: position (3D), orientation (quaternion), velocity, joint angles
+- Obstacles are dictionaries with 'position' and 'size' keys
+- Return values should be numpy arrays for compatibility with Genesis
+- Avoid heavy computations; aim for <1ms execution time
+
+Output ONLY the complete Python code. No explanations, no markdown formatting.
+The code MUST include the function named '{required_func['name']}'."""
 
         return prompt
+
+    def _validate_function_exists(self, code: str, function_name: str) -> Dict[str, any]:
+        """Validate that required function exists in generated Python code"""
+
+        # Check for Python function declaration
+        function_patterns = [
+            f"def\\s+{function_name}\\s*\\(",  # def find_path(
+            f"async\\s+def\\s+{function_name}\\s*\\(",  # async def find_path(
+        ]
+
+        for pattern in function_patterns:
+            if re.search(pattern, code):
+                return {
+                    'valid': True,
+                    'function_name': function_name,
+                    'pattern_matched': pattern
+                }
+
+        return {
+            'valid': False,
+            'function_name': function_name,
+            'error': f"Function '{function_name}' not found in generated code"
+        }
+
+    def _call_ollama(self, prompt: str, temperature: float = 0.2) -> str:
+        """Call Ollama API to generate code"""
+        try:
+            response = requests.post(
+                self.OLLAMA_URL,
+                json={
+                    "model": self.OLLAMA_MODEL,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": temperature,
+                        "num_predict": 3000,
+                        "top_p": 0.9,
+                        "top_k": 40,
+                        "stop": ["```\n\n", "// Example usage:", "/* Example"]
+                    }
+                },
+                timeout=180
+            )
+
+            if response.status_code != 200:
+                raise Exception(f"Ollama API error: {response.status_code}")
+
+            result = response.json()
+            code = result.get("response", "")
+
+            # Clean up the code
+            code = self._clean_code(code)
+
+            return code
+
+        except requests.exceptions.Timeout:
+            raise Exception("Algorithm generation timed out")
+        except Exception as e:
+            raise Exception(f"Failed to generate algorithm: {str(e)}")
+
+    def _clean_code(self, code: str) -> str:
+        """Clean up generated Python code"""
+        # Remove markdown code blocks
+        code = re.sub(r'^```python\n', '', code)
+        code = re.sub(r'^```py\n', '', code)
+        code = re.sub(r'^```\n', '', code)
+        code = re.sub(r'\n```$', '', code)
+
+        # Remove example usage sections
+        code = re.sub(r'# Example usage:.*$', '', code, flags=re.DOTALL)
+        code = re.sub(r'if __name__ == ["\']__main__["\']:.*$', '', code, flags=re.DOTALL)
+
+        return code.strip()
+
+    def _extract_parameters(self, code: str) -> List[Dict[str, any]]:
+        """Extract configurable parameters from Python code"""
+        parameters = []
+
+        # Match Python module-level constants: NAME = value  # comment
+        const_pattern = r'^([A-Z_][A-Z0-9_]*)\s*[:=]\s*([^#\n]+)(?:\s*#\s*(.+))?$'
+        matches = re.finditer(const_pattern, code[:1500], re.MULTILINE)
+
+        for match in matches:
+            name, value, comment = match.groups()
+
+            value = value.strip()
+
+            # Infer type from value
+            param_type = self._infer_python_type(value)
+
+            param = {
+                "name": name,
+                "type": param_type,
+                "value": self._parse_python_value(value, param_type),
+                "description": comment.strip() if comment else name.replace('_', ' ').title()
+            }
+
+            if param["type"] in ["float", "int"]:
+                param["min"] = 0
+                param["max"] = max(param["value"] * 3, 10)
+                param["step"] = param["value"] * 0.1 if param["type"] == "float" else 1
+
+            parameters.append(param)
+
+        return parameters
+
+    def _parse_value(self, value_str: str, type_hint: str) -> any:
+        """Parse string value to proper type (legacy TypeScript support)"""
+        try:
+            if type_hint.lower() == "number":
+                return float(value_str)
+            elif type_hint.lower() == "boolean":
+                return value_str.lower() == "true"
+            elif type_hint.lower() == "string":
+                return value_str.strip('"\'')
+            else:
+                return value_str
+        except:
+            return value_str
+
+    def _infer_python_type(self, value_str: str) -> str:
+        """Infer Python type from value string"""
+        value_str = value_str.strip()
+
+        # Check for boolean
+        if value_str in ['True', 'False']:
+            return 'bool'
+
+        # Check for string
+        if value_str.startswith('"') or value_str.startswith("'"):
+            return 'str'
+
+        # Check for float
+        if '.' in value_str:
+            try:
+                float(value_str)
+                return 'float'
+            except:
+                pass
+
+        # Check for int
+        try:
+            int(value_str)
+            return 'int'
+        except:
+            pass
+
+        # Default to string
+        return 'str'
+
+    def _parse_python_value(self, value_str: str, param_type: str) -> any:
+        """Parse Python value string to proper type"""
+        try:
+            if param_type == 'int':
+                return int(float(value_str))
+            elif param_type == 'float':
+                return float(value_str)
+            elif param_type == 'bool':
+                return value_str.strip() == 'True'
+            elif param_type == 'str':
+                return value_str.strip('"\'')
+            else:
+                return value_str
+        except:
+            return value_str
+
+    def _estimate_complexity(self, code: str) -> str:
+        """Estimate computational complexity from Python code structure"""
+        # Count nested for/while loops
+        nested_loops = len(re.findall(r'for\s+\w+\s+in\s+[^:]+:[^f]*for\s+\w+\s+in', code))
+        single_loops = len(re.findall(r'(?:for|while)\s+', code)) - nested_loops * 2
+
+        if nested_loops >= 2:
+            return "O(n³) - High complexity"
+        elif nested_loops >= 1:
+            return "O(n²) - Moderate complexity"
+        elif single_loops >= 1:
+            return "O(n) - Linear complexity"
+        else:
+            return "O(1) - Constant time"
 
     def _get_robot_context(self, robot_type: str) -> str:
         """Get context about robot capabilities"""
@@ -365,124 +401,44 @@ Robot Capabilities:
         }
         return contexts.get(robot_type, "")
 
-    def _call_ollama(self, prompt: str, temperature: float = 0.2) -> str:
-        """Call Ollama API to generate code"""
-        try:
-            response = requests.post(
-                self.OLLAMA_URL,
-                json={
-                    "model": self.OLLAMA_MODEL,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {
-                        "temperature": temperature,  # Lower for more consistent code
-                        "num_predict": 3000,  # More tokens for complex algorithms
-                        "top_p": 0.9,
-                        "top_k": 40,
-                        "stop": ["```\n\n", "// Example usage:", "/* Example"]  # Stop before examples
-                    }
-                },
-                timeout=180  # 3 minutes for complex algorithms
-            )
+    def _load_templates(self) -> Dict[str, str]:
+        """Load algorithm templates"""
+        return {
+            "path_planning": """
+// Path Planning Algorithm Template
+interface PathPoint {
+  x: number
+  z: number
+}
 
-            if response.status_code != 200:
-                raise Exception(f"Ollama API error: {response.status_code}")
+function findPath(
+  start: THREE.Vector3,
+  goal: THREE.Vector3,
+  obstacles: Array<{position: THREE.Vector3, radius: number}>
+): THREE.Vector3[] {
+  // Algorithm implementation here
+  return []
+}
+""",
+            "obstacle_avoidance": """
+// Obstacle Avoidance Algorithm Template
+interface Vector2D {
+  x: number
+  z: number
+}
 
-            result = response.json()
-            code = result.get("response", "")
-
-            # Clean up the code
-            code = self._clean_code(code)
-
-            return code
-
-        except requests.exceptions.Timeout:
-            raise Exception("Algorithm generation timed out. Try a simpler description.")
-        except Exception as e:
-            raise Exception(f"Failed to generate algorithm: {str(e)}")
-
-    def _clean_code(self, code: str) -> str:
-        """Clean up generated code"""
-        # Remove markdown code blocks
-        code = re.sub(r'^```typescript\n', '', code)
-        code = re.sub(r'^```javascript\n', '', code)
-        code = re.sub(r'^```\n', '', code)
-        code = re.sub(r'\n```$', '', code)
-
-        # Remove example usage sections
-        code = re.sub(r'// Example usage:.*$', '', code, flags=re.DOTALL)
-        code = re.sub(r'/\* Example.*?\*/', '', code, flags=re.DOTALL)
-
-        # Trim whitespace
-        code = code.strip()
-
-        return code
-
-    def _extract_parameters(self, code: str) -> List[Dict[str, any]]:
-        """
-        Extract configurable parameters from code
-
-        Looks for constants/config at the top of the code and creates
-        UI-friendly parameter definitions
-        """
-        parameters = []
-
-        # Find const declarations at top of file
-        const_pattern = r'const\s+(\w+):\s*(\w+)\s*=\s*([^;]+);?\s*(?://\s*(.+))?'
-        matches = re.finditer(const_pattern, code[:1000])  # Check first 1000 chars
-
-        for match in matches:
-            name, type_hint, value, comment = match.groups()
-
-            # Skip non-config constants
-            if name.startswith('_') or name[0].isupper():
-                continue
-
-            param = {
-                "name": name,
-                "type": type_hint.lower(),
-                "value": self._parse_value(value.strip(), type_hint),
-                "description": comment.strip() if comment else name.replace('_', ' ').title()
-            }
-
-            # Add min/max for numbers
-            if param["type"] == "number":
-                param["min"] = 0
-                param["max"] = param["value"] * 3  # Default range
-                param["step"] = param["value"] * 0.1
-
-            parameters.append(param)
-
-        return parameters
-
-    def _parse_value(self, value_str: str, type_hint: str) -> any:
-        """Parse string value to proper type"""
-        try:
-            if type_hint.lower() == "number":
-                return float(value_str)
-            elif type_hint.lower() == "boolean":
-                return value_str.lower() == "true"
-            elif type_hint.lower() == "string":
-                return value_str.strip('"\'')
-            else:
-                return value_str
-        except:
-            return value_str
-
-    def _estimate_complexity(self, code: str) -> str:
-        """Estimate computational complexity from code structure"""
-        # Simple heuristic based on loop nesting
-        nested_loops = len(re.findall(r'for\s*\([^)]+\)[^{]*{[^}]*for\s*\(', code))
-        single_loops = len(re.findall(r'for\s*\([^)]+\)', code)) - nested_loops * 2
-
-        if nested_loops >= 2:
-            return "O(n³) - High complexity, may impact performance"
-        elif nested_loops >= 1:
-            return "O(n²) - Moderate complexity"
-        elif single_loops >= 1:
-            return "O(n) - Linear complexity"
-        else:
-            return "O(1) - Constant time"
+function computeSafeVelocity(
+  currentPos: Vector2D,
+  currentVel: Vector2D,
+  obstacles: Array<{position: THREE.Vector3, radius: number}>,
+  goal: Vector2D,
+  maxSpeed: number
+): Vector2D {
+  // Algorithm implementation here
+  return { x: 0, z: 0 }
+}
+"""
+        }
 
 
 # Singleton instance

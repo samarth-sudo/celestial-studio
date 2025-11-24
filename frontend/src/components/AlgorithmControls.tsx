@@ -61,8 +61,12 @@ export default function AlgorithmControls({
   }, [manager, robotId])
 
   useEffect(() => {
-    // Load algorithms
+    // Load algorithms initially and refresh periodically to sync with robot state
     loadAlgorithms()
+
+    // Periodic refresh to sync active algorithm state with robot
+    const interval = setInterval(loadAlgorithms, 1000) // Refresh every 1s
+    return () => clearInterval(interval)
   }, [loadAlgorithms])
 
   const handleGenerate = async () => {
@@ -83,11 +87,24 @@ export default function AlgorithmControls({
 
       console.log('✅ Algorithm generated:', algorithm.name)
 
+      // Auto-apply the generated algorithm to the robot
+      try {
+        manager.applyAlgorithm(robotId, algorithm.id)
+        setActiveAlgorithmIds(prev => new Set([...prev, algorithm.id]))
+        console.log('🔄 Auto-applied algorithm to robot')
+
+        if (onAlgorithmApplied) {
+          onAlgorithmApplied(algorithm)
+        }
+      } catch (applyError) {
+        console.warn('Could not auto-apply algorithm:', applyError)
+      }
+
       // Success toast
       showToast({
         type: 'success',
-        title: 'Algorithm Generated',
-        message: `"${algorithm.name}" is ready to use`
+        title: 'Algorithm Generated & Applied',
+        message: `"${algorithm.name}" is now active on ${robotId}`
       })
     } catch (error: unknown) {
       console.error('❌ Generation failed:', error)

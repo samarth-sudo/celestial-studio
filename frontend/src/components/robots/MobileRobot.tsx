@@ -3,18 +3,19 @@ import { useFrame } from '@react-three/fiber'
 import { RigidBody, type RapierRigidBody } from '@react-three/rapier'
 import * as THREE from 'three'
 import type { ComputedPath } from '../../types/PathPlanning'
+import type { Vector2D } from '../../types/AlgorithmInterface'
 import { getAlgorithmManager } from '../../services/AlgorithmManager'
 import {
   FrameRateLimiter,
   clampVelocity,
-  isValidVelocity,
-  throttle
+  isValidVelocity
 } from '../../utils/performanceUtils'
 
 interface MobileRobotProps {
   onPositionUpdate?: (position: [number, number, number], rotation: [number, number, number]) => void
   onWaypointUpdate?: (currentWaypoint: number, totalWaypoints: number) => void
   onAlgorithmStatusUpdate?: (active: boolean, algorithmName?: string) => void
+  onError?: (error: string) => void  // NEW: Error callback
   path?: ComputedPath | null
   isPaused?: boolean
   obstacles?: Array<{ position: THREE.Vector3; radius: number }>
@@ -25,6 +26,7 @@ export default function MobileRobot({
   onPositionUpdate,
   onWaypointUpdate,
   onAlgorithmStatusUpdate,
+  onError,
   path,
   isPaused = false,
   obstacles = [],
@@ -33,16 +35,15 @@ export default function MobileRobot({
   const bodyRef = useRef<RapierRigidBody>(null)
   const manager = getAlgorithmManager()
 
-  // Performance: Frame rate limiter for algorithm execution (10 Hz instead of 60)
+  // Performance: Frame rate limiter
   const algorithmLimiter = useRef(new FrameRateLimiter(10))
 
-  // Performance: Cache algorithm lookups to avoid querying manager 60 times/second
+  // Cache algorithm lookups
   const [cachedAlgorithms, setCachedAlgorithms] = useState<{
     obstacleAvoidance: any[]
     lastUpdate: number
   }>({ obstacleAvoidance: [], lastUpdate: 0 })
 
-  // Demo waypoints (used when no path is provided)
   const demoWaypoints = useMemo(() => [
     new THREE.Vector3(0, 0.5, 0),
     new THREE.Vector3(3, 0.5, 0),
@@ -51,38 +52,36 @@ export default function MobileRobot({
     new THREE.Vector3(0, 0.5, 0),
   ], [])
 
-  // Use computed path waypoints if available, otherwise use demo waypoints
   const [waypoints, setWaypoints] = useState<THREE.Vector3[]>(demoWaypoints)
   const [currentWaypoint, setCurrentWaypoint] = useState(0)
-  const speed = 2
-  const MAX_VELOCITY = 5 // Safety: Maximum allowed velocity magnitude
-
-  // Visual indicator: Track if algorithm is actively modifying velocity
   const [algorithmActive, setAlgorithmActive] = useState(false)
+  const [lastError, setLastError] = useState<string | null>(null)
+
+  const speed = 2
+  const MAX_VELOCITY = 5
 
   // Update waypoints when path changes
   useEffect(() => {
     if (path && path.waypoints && path.waypoints.length > 0) {
-      // Convert path waypoints to include the robot's Y position
       const pathWithHeight = path.waypoints.map(wp =>
         new THREE.Vector3(wp.x, 0.5, wp.z)
       )
       setWaypoints(pathWithHeight)
-      setCurrentWaypoint(0) // Reset to start of path
+      setCurrentWaypoint(0)
     } else {
       setWaypoints(demoWaypoints)
       setCurrentWaypoint(0)
     }
-  }, [path])
+  }, [path, demoWaypoints])
 
-  // Report waypoint progress to parent
+  // Report waypoint progress
   useEffect(() => {
     if (onWaypointUpdate) {
       onWaypointUpdate(currentWaypoint, waypoints.length)
     }
   }, [currentWaypoint, waypoints.length, onWaypointUpdate])
 
-  // Performance: Update algorithm cache periodically (every 2 seconds instead of every frame)
+  // Update algorithm cache periodically
   useEffect(() => {
     const updateCache = () => {
       const obstacleAvoidance = manager.getAlgorithmsByType(robotId, 'obstacle_avoidance')
@@ -92,10 +91,7 @@ export default function MobileRobot({
       })
     }
 
-    // Initial update
     updateCache()
-
-    // Update every 2 seconds
     const interval = setInterval(updateCache, 2000)
     return () => clearInterval(interval)
   }, [robotId, manager])
@@ -106,9 +102,8 @@ export default function MobileRobot({
     const position = bodyRef.current.translation()
     const rotation = bodyRef.current.rotation()
 
-    // Update parent component with current position and rotation
+    // Update parent component
     if (onPositionUpdate) {
-      // Convert quaternion to Euler angles
       const euler = new THREE.Euler().setFromQuaternion(
         new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w)
       )
@@ -118,7 +113,7 @@ export default function MobileRobot({
       )
     }
 
-    // Stop movement if paused
+    // Stop if paused
     if (isPaused) {
       bodyRef.current.setLinvel({ x: 0, y: 0, z: 0 }, true)
       return
@@ -136,80 +131,83 @@ export default function MobileRobot({
     const distance = direction.length()
 
     if (distance < 0.2) {
-      // Reached waypoint, move to next
+      // Reached waypoint
       setCurrentWaypoint((prev) => (prev + 1) % waypoints.length)
     } else {
-      // Calculate base velocity towards target
+      // Calculate base velocity
       direction.normalize()
       let velocity = direction.clone().multiplyScalar(speed)
       let algorithmModified = false
+      let algorithmName = ''
 
-      // Performance: Only run obstacle avoidance at 10 Hz (not 60 Hz)
-      // Safety: Use cached algorithms instead of querying every frame
+      // Execute obstacle avoidance algorithm (FIXED VERSION)
       if (cachedAlgorithms.obstacleAvoidance.length > 0 &&
           obstacles.length > 0 &&
           algorithmLimiter.current.shouldExecute()) {
+
+        // FIXED: Get first algorithm from array (was incorrectly treating array as single object)
+        const algo = cachedAlgorithms.obstacleAvoidance[0]
+        if (!algo) return  // Guard clause
+        algorithmName = algo.name
+
         try {
-          // Use the first active obstacle avoidance algorithm
-          const algo = cachedAlgorithms.obstacleAvoidance[0]
+          // Use standardized interface
+          const currentPos: Vector2D = { x: position.x, z: position.z }
+          const currentVel: Vector2D = { x: velocity.x, z: velocity.z }
+          const goal: Vector2D = { x: target.x, z: target.z }
 
-          // Create current velocity vector for algorithm
-          const currentVel = { x: velocity.x, z: velocity.z }
-          const currentPos = { x: position.x, z: position.z }
-          const goal = { x: target.x, z: target.z }
+          // Call algorithm with standardized function name
+          const result = manager.executeObstacleAvoidance(
+            algo.id,
+            currentPos,
+            currentVel,
+            obstacles,
+            goal,
+            speed
+          )
 
-          // Call obstacle avoidance algorithm
-          // Try common function names
-          const functionNames = ['calculateSafeVelocity', 'avoidObstacles', 'computeSafeVelocity']
+          // Validate result
+          if (isValidVelocity(result)) {
+            velocity = new THREE.Vector3(result.x, 0, result.z)
+            velocity = clampVelocity(velocity, MAX_VELOCITY)
+            algorithmModified = true
 
-          for (const funcName of functionNames) {
-            try {
-              const result = manager.executeAlgorithm(
-                algo.id,
-                funcName,
-                currentPos,
-                currentVel,
-                obstacles,
-                goal,
-                speed
-              )
+            // Clear previous errors
+            if (lastError) {
+              setLastError(null)
+            }
 
-              // Safety: Validate algorithm output before using it
-              if (isValidVelocity(result)) {
-                velocity = new THREE.Vector3(result.x, 0, result.z)
+            console.log(`🛡️ Obstacle avoidance: (${result.x.toFixed(2)}, ${result.z.toFixed(2)})`)
+          } else {
+            throw new Error(`Invalid velocity: ${JSON.stringify(result)}`)
+          }
 
-                // Safety: Clamp velocity to maximum allowed magnitude
-                velocity = clampVelocity(velocity, MAX_VELOCITY)
+        } catch (error: any) {
+          const errorMsg = `Algorithm '${algo.name}' failed: ${error.message}`
+          console.error(`❌ ${errorMsg}`)
 
-                algorithmModified = true
-                console.log(`🛡️ Obstacle avoidance applied: (${result.x.toFixed(2)}, ${result.z.toFixed(2)})`)
-                break
-              } else {
-                console.warn(`⚠️ Invalid velocity from algorithm: ${JSON.stringify(result)}`)
-              }
-            } catch (error) {
-              // Try next function name
-              continue
+          // Report error to parent (only once per unique error)
+          if (errorMsg !== lastError) {
+            setLastError(errorMsg)
+            if (onError) {
+              onError(errorMsg)
             }
           }
-        } catch (error: any) {
-          console.warn(`⚠️ Obstacle avoidance failed, using direct path:`, error.message)
+
           algorithmModified = false
         }
       }
 
-      // Update visual indicator state
+      // Update visual indicator
       if (algorithmActive !== algorithmModified) {
         setAlgorithmActive(algorithmModified)
 
-        // Notify parent component of algorithm status change
         if (onAlgorithmStatusUpdate) {
-          const algoName = cachedAlgorithms.obstacleAvoidance[0]?.name
-          onAlgorithmStatusUpdate(algorithmModified, algoName)
+          onAlgorithmStatusUpdate(algorithmModified, algorithmName)
         }
       }
 
-      // Safety: Always clamp velocity even if no algorithm was applied
+      // Safety: Clamp velocity
       velocity = clampVelocity(velocity, MAX_VELOCITY)
 
       bodyRef.current.setLinvel({ x: velocity.x, y: 0, z: velocity.z }, true)
@@ -236,33 +234,46 @@ export default function MobileRobot({
           </mesh>
         )}
 
+        {/* Error Indicator: Red glow when algorithm failed */}
+        {lastError && (
+          <mesh scale={[1.35, 1.15, 1.15]}>
+            <boxGeometry args={[1.2, 0.6, 0.8]} />
+            <meshBasicMaterial
+              color="#ff0000"
+              transparent
+              opacity={0.2}
+              wireframe
+            />
+          </mesh>
+        )}
+
         {/* Robot Body */}
         <mesh castShadow receiveShadow>
           <boxGeometry args={[1.2, 0.6, 0.8]} />
           <meshStandardMaterial
-            color="#3498db"
-            emissive={algorithmActive ? "#00ff88" : "#000000"}
-            emissiveIntensity={algorithmActive ? 0.3 : 0}
+            color={lastError ? "#e74c3c" : "#3498db"}
+            emissive={algorithmActive ? "#00ff88" : lastError ? "#ff0000" : "#000000"}
+            emissiveIntensity={algorithmActive || lastError ? 0.3 : 0}
           />
         </mesh>
 
         {/* Wheels */}
-        <mesh position={[-0.5, -0.3, 0.5]} rotation={[Math.PI / 2, 0, 0]} castShadow>
-          <cylinderGeometry args={[0.15, 0.15, 0.1, 16]} />
-          <meshStandardMaterial color="#2c3e50" />
-        </mesh>
-        <mesh position={[0.5, -0.3, 0.5]} rotation={[Math.PI / 2, 0, 0]} castShadow>
-          <cylinderGeometry args={[0.15, 0.15, 0.1, 16]} />
-          <meshStandardMaterial color="#2c3e50" />
-        </mesh>
-        <mesh position={[-0.5, -0.3, -0.5]} rotation={[Math.PI / 2, 0, 0]} castShadow>
-          <cylinderGeometry args={[0.15, 0.15, 0.1, 16]} />
-          <meshStandardMaterial color="#2c3e50" />
-        </mesh>
-        <mesh position={[0.5, -0.3, -0.5]} rotation={[Math.PI / 2, 0, 0]} castShadow>
-          <cylinderGeometry args={[0.15, 0.15, 0.1, 16]} />
-          <meshStandardMaterial color="#2c3e50" />
-        </mesh>
+        {[
+          [-0.5, -0.3, 0.5],
+          [0.5, -0.3, 0.5],
+          [-0.5, -0.3, -0.5],
+          [0.5, -0.3, -0.5]
+        ].map((pos, i) => (
+          <mesh
+            key={i}
+            position={pos as [number, number, number]}
+            rotation={[Math.PI / 2, 0, 0]}
+            castShadow
+          >
+            <cylinderGeometry args={[0.15, 0.15, 0.1, 16]} />
+            <meshStandardMaterial color="#2c3e50" />
+          </mesh>
+        ))}
 
         {/* Sensor/Top piece */}
         <mesh position={[0, 0.5, 0]} castShadow>

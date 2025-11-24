@@ -1,13 +1,25 @@
 /**
- * Algorithm Manager for Celestial Studio
- *
- * Manages hot-swappable algorithms for robots in the simulation.
- * Enables real-time code injection and live parameter tuning without restart.
+ * Algorithm Manager for Celestial Studio - FIXED VERSION
+ * 
+ * Key improvements:
+ * 1. Uses standardized function names from AlgorithmInterface
+ * 2. Proper THREE.js context injection
+ * 3. Better error handling and reporting
+ * 4. Stores function metadata from backend
  */
 
 import * as THREE from 'three'
 import axios from 'axios'
 import config from '../config'
+import type {
+  PathPlanningAlgorithm,
+  ObstacleAvoidanceAlgorithm,
+  InverseKinematicsAlgorithm,
+  ComputerVisionAlgorithm,
+  AlgorithmMetadata,
+  Obstacle,
+  Vector2D
+} from '../types/AlgorithmInterface'
 
 export interface Algorithm {
   id: string
@@ -17,7 +29,9 @@ export interface Algorithm {
   parameters: AlgorithmParameter[]
   complexity: string
   description: string
-  compiledFunction?: Function
+  compiledFunction?: any  // Compiled algorithm functions
+  functionName?: string  // NEW: Primary function name from backend
+  functionSignature?: AlgorithmMetadata  // NEW: Function metadata
 }
 
 export interface AlgorithmParameter {
@@ -38,11 +52,11 @@ export interface AlgorithmState {
 }
 
 /**
- * AlgorithmManager - Hot-swappable algorithm system
+ * AlgorithmManager - Hot-swappable algorithm system with standardized interfaces
  */
 export class AlgorithmManager {
   private algorithms: Map<string, Algorithm> = new Map()
-  private activeAlgorithms: Map<string, Set<string>> = new Map() // robotId -> Set of algorithmIds
+  private activeAlgorithms: Map<string, Set<string>> = new Map()
   private robotStates: Map<string, AlgorithmState> = new Map()
   private readonly API_URL = config.backendUrl
 
@@ -57,69 +71,60 @@ export class AlgorithmManager {
   ): Promise<Algorithm> {
     try {
       console.log(`🔄 Generating ${algorithmType} algorithm...`)
-      console.log(`Description: "${description}"`)
-      console.log(`Robot type: ${robotType}`)
 
       const response = await axios.post(`${this.API_URL}/api/generate-algorithm`, {
         description,
         robot_type: robotType,
         algorithm_type: algorithmType
       }, {
-        timeout: 120000, // 120 second timeout (complex algorithms like CV + obstacle avoidance can take longer)
-        headers: {
-          'Content-Type': 'application/json'
-        }
+        timeout: 120000,
+        headers: { 'Content-Type': 'application/json' }
       })
 
       console.log('✅ Received response from backend:', response.status)
-      const { code, parameters, complexity, description: desc } = response.data
+      const {
+        code,
+        parameters,
+        complexity,
+        description: desc,
+        function_name,  // NEW: From backend
+        function_signature  // NEW: From backend
+      } = response.data
 
-      // Try to compile code (optional for Computer Vision algorithms)
-      const compiledFunction = this.compileCode(code)
+      // Compile code with proper THREE.js context
+      const compiledFunction = this.compileCode(code, function_name)
 
-      // Create algorithm object
       const algorithm: Algorithm = {
         id: this.generateId(),
-        name: this.extractAlgorithmName(code) || `${algorithmType}_${Date.now()}`,
+        name: function_name || this.extractAlgorithmName(code) || `${algorithmType}_${Date.now()}`,
         type: algorithmType,
         code,
         parameters: parameters || [],
         complexity: complexity || 'Unknown',
         description: desc || description,
-        compiledFunction: compiledFunction || undefined
+        compiledFunction,
+        functionName: function_name,  // NEW
+        functionSignature: function_signature  // NEW
       }
 
-      // Store algorithm
       this.algorithms.set(algorithm.id, algorithm)
 
-      // Store in conversation context for export
       if (userId) {
         await this.storeAlgorithmInContext(userId, algorithm)
       }
 
       console.log(`✅ Generated algorithm: ${algorithm.name}`)
-      console.log(`Code length: ${code.length} chars`)
-      console.log(`Parameters: ${parameters?.length || 0}`)
-      console.log(`Compiled: ${compiledFunction ? 'Yes' : 'No (display only)'}`)
+      console.log(`   Function name: ${function_name}`)
+      console.log(`   Compiled: ${compiledFunction ? 'Yes' : 'No'}`)
+      
       return algorithm
 
     } catch (error: unknown) {
       console.error('❌ Algorithm generation failed:', error)
 
       if (axios.isAxiosError(error)) {
-        console.error('Error details:', {
-          message: error.message,
-          response: error.response?.data,
-          status: error.response?.status,
-          config: {
-            url: error.config?.url,
-            method: error.config?.method,
-            data: error.config?.data
-          }
-        })
-
         if (error.code === 'ECONNABORTED') {
-          throw new Error('Request timed out. Algorithm generation takes 10-20 seconds, please wait...')
+          throw new Error('Request timed out. Algorithm generation takes 10-20 seconds.')
         } else if (error.response) {
           throw new Error(`Server error: ${error.response.data?.detail || error.response.statusText}`)
         } else if (error.request) {
@@ -132,75 +137,62 @@ export class AlgorithmManager {
   }
 
   /**
-   * Add an algorithm to the manager (for templates or imported algorithms)
-   *
-   * This method allows directly adding pre-built algorithms without generation.
-   * Used when loading templates or importing existing algorithms.
+   * Compile TypeScript/JavaScript code with proper THREE.js context
+   * FIXED VERSION: Uses proper sandboxing and function extraction
    */
-  addAlgorithm(algorithm: Algorithm): void {
-    // Ensure algorithm has a valid ID
-    if (!algorithm.id) {
-      algorithm.id = this.generateId()
-    }
-
-    // Compile code if not already compiled
-    if (!algorithm.compiledFunction && algorithm.code) {
-      algorithm.compiledFunction = this.compileCode(algorithm.code) || undefined
-    }
-
-    // Store algorithm
-    this.algorithms.set(algorithm.id, algorithm)
-
-    console.log(`✅ Added algorithm: ${algorithm.name} (${algorithm.type})`)
-    console.log(`   Total algorithms in manager: ${this.algorithms.size}`)
-  }
-
-  /**
-   * Modify an existing algorithm
-   */
-  async modifyAlgorithm(
-    algorithmId: string,
-    modificationRequest: string
-  ): Promise<Algorithm> {
-    const currentAlgorithm = this.algorithms.get(algorithmId)
-    if (!currentAlgorithm) {
-      throw new Error(`Algorithm ${algorithmId} not found`)
-    }
-
+  private compileCode(code: string, expectedFunctionName?: string): any | null {
     try {
-      const response = await axios.post(`${this.API_URL}/api/generate-algorithm`, {
-        description: modificationRequest,
-        robot_type: 'mobile', // Will be improved to track per-algorithm
-        algorithm_type: currentAlgorithm.type,
-        current_code: currentAlgorithm.code,
-        modification_request: modificationRequest
-      })
+      console.log(`🔨 Compiling code (expected function: ${expectedFunctionName})...`)
 
-      const { code, parameters, complexity } = response.data
+      // Remove imports (not supported in Function constructor)
+      const cleanCode = code.replace(/import\s+.*\s+from\s+['"].*['"]/g, '')
 
-      // Update algorithm
-      const modifiedAlgorithm: Algorithm = {
-        ...currentAlgorithm,
-        code,
-        parameters: parameters || currentAlgorithm.parameters,
-        complexity: complexity || currentAlgorithm.complexity,
-        description: `${currentAlgorithm.description} (Modified: ${modificationRequest})`,
-        compiledFunction: this.compileCode(code)
+      // Create sandbox with THREE.js context
+      const sandbox = {
+        THREE,
+        Vector3: THREE.Vector3,
+        Vector2: THREE.Vector2,
+        Euler: THREE.Euler,
+        Math: Math,
+        console: console  // Allow logging for debugging
       }
 
-      this.algorithms.set(algorithmId, modifiedAlgorithm)
+      // Wrap code to return an object with all functions
+      const wrappedCode = `
+        ${cleanCode}
+        
+        // Return object with all declared functions
+        return {
+          ${expectedFunctionName || 'main'}: typeof ${expectedFunctionName} !== 'undefined' ? ${expectedFunctionName} : null
+        }
+      `
 
-      console.log(`✅ Modified algorithm: ${modifiedAlgorithm.name}`)
-      return modifiedAlgorithm
+      // Create function with sandbox context
+      const sandboxKeys = Object.keys(sandbox)
+      const sandboxValues = Object.values(sandbox)
+      
+      const compiledFn = new Function(...sandboxKeys, wrappedCode)
+      const result = compiledFn(...sandboxValues)
 
-    } catch (error) {
-      console.error('❌ Algorithm modification failed:', error)
-      throw new Error(`Failed to modify algorithm: ${error}`)
+      if (expectedFunctionName && !result[expectedFunctionName]) {
+        console.warn(`⚠️ Expected function '${expectedFunctionName}' not found in compiled code`)
+        return null
+      }
+
+      console.log(`✅ Code compiled successfully`)
+      console.log(`   Available functions:`, Object.keys(result))
+      
+      return result
+
+    } catch (error: unknown) {
+      console.error('❌ Code compilation failed:', error instanceof Error ? error.message : String(error))
+      console.log('Code preview:', code.substring(0, 200) + '...')
+      return null
     }
   }
 
   /**
-   * Apply algorithm to a robot (adds to active algorithms)
+   * Apply algorithm to a robot
    */
   applyAlgorithm(robotId: string, algorithmId: string): void {
     const algorithm = this.algorithms.get(algorithmId)
@@ -208,16 +200,13 @@ export class AlgorithmManager {
       throw new Error(`Algorithm ${algorithmId} not found`)
     }
 
-    // Get or create active algorithms set for this robot
     if (!this.activeAlgorithms.has(robotId)) {
       this.activeAlgorithms.set(robotId, new Set<string>())
     }
 
-    // Add algorithm to active set
     this.activeAlgorithms.get(robotId)!.add(algorithmId)
 
     console.log(`🔄 Applied algorithm ${algorithm.name} to robot ${robotId}`)
-    console.log(`   Total active algorithms: ${this.activeAlgorithms.get(robotId)!.size}`)
   }
 
   /**
@@ -225,33 +214,12 @@ export class AlgorithmManager {
    */
   removeAlgorithm(robotId: string, algorithmId: string): void {
     const activeSet = this.activeAlgorithms.get(robotId)
-    if (!activeSet) {
-      console.warn(`No active algorithms for robot ${robotId}`)
-      return
-    }
+    if (!activeSet) return
 
-    const removed = activeSet.delete(algorithmId)
-    if (removed) {
-      const algorithm = this.algorithms.get(algorithmId)
-      console.log(`🗑️ Removed algorithm ${algorithm?.name || algorithmId} from robot ${robotId}`)
-      console.log(`   Remaining active algorithms: ${activeSet.size}`)
-    }
-
-    // Clean up empty sets
+    activeSet.delete(algorithmId)
     if (activeSet.size === 0) {
       this.activeAlgorithms.delete(robotId)
     }
-  }
-
-  /**
-   * Get active algorithm for a robot (returns first one for backwards compatibility)
-   */
-  getActiveAlgorithm(robotId: string): Algorithm | null {
-    const activeSet = this.activeAlgorithms.get(robotId)
-    if (!activeSet || activeSet.size === 0) return null
-
-    const firstId = Array.from(activeSet)[0]
-    return this.algorithms.get(firstId) || null
   }
 
   /**
@@ -274,66 +242,13 @@ export class AlgorithmManager {
   }
 
   /**
-   * Check if robot has an active algorithm of a specific type
-   */
-  hasAlgorithmType(robotId: string, type: Algorithm['type']): boolean {
-    return this.getAlgorithmsByType(robotId, type).length > 0
-  }
-
-  /**
-   * Update algorithm parameter value (live tuning)
-   */
-  updateParameter(algorithmId: string, paramName: string, value: string | number | boolean): void {
-    const algorithm = this.algorithms.get(algorithmId)
-    if (!algorithm) {
-      throw new Error(`Algorithm ${algorithmId} not found`)
-    }
-
-    const param = algorithm.parameters.find(p => p.name === paramName)
-    if (!param) {
-      throw new Error(`Parameter ${paramName} not found in algorithm`)
-    }
-
-    // Update parameter value
-    param.value = value
-
-    // Re-compile code with new parameter value
-    const modifiedCode = this.injectParameterValues(algorithm.code, algorithm.parameters)
-    algorithm.compiledFunction = this.compileCode(modifiedCode)
-
-    console.log(`🎛️ Updated ${paramName} = ${value} in ${algorithm.name}`)
-  }
-
-  /**
-   * Execute algorithm function
-   */
-  executeAlgorithm(
-    algorithmId: string,
-    functionName: string,
-    ...args: unknown[]
-  ): unknown {
-    const algorithm = this.algorithms.get(algorithmId)
-    if (!algorithm || !algorithm.compiledFunction) {
-      throw new Error(`Algorithm ${algorithmId} not compiled`)
-    }
-
-    try {
-      // Execute in sandboxed context
-      return algorithm.compiledFunction(functionName, ...args)
-    } catch (error) {
-      console.error(`❌ Algorithm execution error:`, error)
-      throw error
-    }
-  }
-
-  /**
-   * Execute a path planning algorithm
+   * Execute path planning algorithm using standardized interface
    */
   executePathPlanning(
     algorithmId: string,
-    origin: THREE.Vector3,
-    destination: THREE.Vector3,
-    obstacles: Array<{ position: THREE.Vector3; radius: number }>
+    start: THREE.Vector3,
+    goal: THREE.Vector3,
+    obstacles: Obstacle[]
   ): THREE.Vector3[] {
     const algorithm = this.algorithms.get(algorithmId)
     if (!algorithm) {
@@ -345,31 +260,74 @@ export class AlgorithmManager {
     }
 
     if (!algorithm.compiledFunction) {
-      throw new Error(`Algorithm ${algorithmId} is not compiled (display only)`)
+      throw new Error(`Algorithm ${algorithmId} is not compiled`)
     }
 
+    const functionName = algorithm.functionName || 'findPath'
+
     try {
-      // Try common function names for path planning
-      const functionNames = ['findPath', 'planPath', 'computePath', 'calculatePath']
-
-      for (const funcName of functionNames) {
-        try {
-          const result = this.executeAlgorithm(algorithmId, funcName, origin, destination, obstacles)
-
-          // Validate result is an array of Vector3
-          if (Array.isArray(result) && result.length > 0) {
-            return result
-          }
-        } catch {
-          // Try next function name
-          continue
-        }
+      const func = algorithm.compiledFunction[functionName]
+      if (typeof func !== 'function') {
+        throw new Error(`Function '${functionName}' not found in algorithm`)
       }
 
-      throw new Error('No valid path planning function found in algorithm')
+      const result = func(start, goal, obstacles)
+
+      if (!Array.isArray(result)) {
+        throw new Error(`Expected array of waypoints, got ${typeof result}`)
+      }
+
+      return result
+
     } catch (error: unknown) {
       console.error(`❌ Path planning execution error:`, error)
       throw new Error(`Failed to execute path planning: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  /**
+   * Execute obstacle avoidance algorithm using standardized interface
+   */
+  executeObstacleAvoidance(
+    algorithmId: string,
+    currentPos: Vector2D,
+    currentVel: Vector2D,
+    obstacles: Obstacle[],
+    goal: Vector2D,
+    maxSpeed: number
+  ): Vector2D {
+    const algorithm = this.algorithms.get(algorithmId)
+    if (!algorithm) {
+      throw new Error(`Algorithm ${algorithmId} not found`)
+    }
+
+    if (algorithm.type !== 'obstacle_avoidance') {
+      throw new Error(`Algorithm ${algorithmId} is not an obstacle avoidance algorithm`)
+    }
+
+    if (!algorithm.compiledFunction) {
+      throw new Error(`Algorithm ${algorithmId} is not compiled`)
+    }
+
+    const functionName = algorithm.functionName || 'computeSafeVelocity'
+
+    try {
+      const func = algorithm.compiledFunction[functionName]
+      if (typeof func !== 'function') {
+        throw new Error(`Function '${functionName}' not found in algorithm`)
+      }
+
+      const result = func(currentPos, currentVel, obstacles, goal, maxSpeed)
+
+      if (typeof result !== 'object' || typeof result.x !== 'number' || typeof result.z !== 'number') {
+        throw new Error(`Expected {x, z} velocity vector, got ${JSON.stringify(result)}`)
+      }
+
+      return result
+
+    } catch (error: unknown) {
+      console.error(`❌ Obstacle avoidance execution error:`, error)
+      throw new Error(`Failed to execute obstacle avoidance: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -381,7 +339,14 @@ export class AlgorithmManager {
   }
 
   /**
-   * Save robot state (for state preservation during hot-swap)
+   * Get all loaded algorithms
+   */
+  getAllAlgorithms(): Algorithm[] {
+    return Array.from(this.algorithms.values())
+  }
+
+  /**
+   * Save robot state
    */
   saveRobotState(robotId: string, state: AlgorithmState): void {
     this.robotStates.set(robotId, state)
@@ -394,138 +359,24 @@ export class AlgorithmManager {
     return this.robotStates.get(robotId) || null
   }
 
-  /**
-   * List all available algorithms
-   */
-  async listAvailableAlgorithms(): Promise<any[]> {
-    try {
-      const response = await axios.get(`${this.API_URL}/api/algorithms`)
-      return response.data.algorithms || []
-    } catch (error) {
-      console.error('❌ Failed to fetch algorithms:', error)
-      return []
-    }
-  }
-
-  /**
-   * Get all loaded algorithms
-   */
-  getAllAlgorithms(): Algorithm[] {
-    return Array.from(this.algorithms.values())
-  }
-
   // ========== Private Helper Methods ==========
 
-  /**
-   * Compile TypeScript/JavaScript code to executable function
-   */
-  private compileCode(code: string): Function | null {
-    try {
-      // Remove imports (not supported in Function constructor)
-      const cleanCode = code.replace(/import\s+.*\s+from\s+['"].*['"]/g, '')
-
-      // Remove TypeScript type annotations that might cause issues
-      const jsCode = cleanCode
-        .replace(/:\s*\w+(\[\])?(\s*\|\s*\w+)*\s*(?=[,;=)\]])/g, '') // Remove type annotations
-        .replace(/interface\s+\w+\s*\{[^}]*\}/g, '') // Remove interfaces
-        .replace(/type\s+\w+\s*=\s*[^;]+;/g, '') // Remove type aliases
-
-      // Wrap code in a function that collects all declared functions
-      const wrappedCode = `
-        ${jsCode}
-
-        // Collect all functions into a safe registry
-        const functionRegistry = {};
-
-        // Use this pattern to safely extract function names without eval
-        const functionPattern = /function\\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\\s*\\(/g;
-        const codeStr = ${JSON.stringify(jsCode)};
-        let match;
-
-        while ((match = functionPattern.exec(codeStr)) !== null) {
-          const fnName = match[1];
-          try {
-            // Use indirect evaluation through this context
-            if (typeof this[fnName] === 'function') {
-              functionRegistry[fnName] = this[fnName];
-            }
-          } catch (e) {
-            // Function might not be accessible, skip it
-          }
-        }
-
-        // Return executor function with safe function registry
-        return function(functionName, ...args) {
-          if (functionRegistry[functionName] && typeof functionRegistry[functionName] === 'function') {
-            return functionRegistry[functionName](...args);
-          }
-          throw new Error('Function ' + functionName + ' not found in registry');
-        }
-      `
-
-      // Create function in isolated scope with THREE.js available
-      const compiledFn = new Function('THREE', wrappedCode)
-
-      // Execute with THREE.js injected
-      return compiledFn.call(global || window || {}, THREE)
-
-    } catch (error: unknown) {
-      console.warn('⚠️ Code compilation skipped (will work for display only):', error instanceof Error ? error.message : String(error))
-      console.log('Code preview:', code.substring(0, 200) + '...')
-      // Return null instead of throwing - algorithm can still be stored and displayed
-      return null
-    }
-  }
-
-  /**
-   * Inject parameter values into code
-   */
-  private injectParameterValues(code: string, parameters: AlgorithmParameter[]): string {
-    let modifiedCode = code
-
-    parameters.forEach(param => {
-      // Replace const declarations with new values
-      const pattern = new RegExp(
-        `const\\s+${param.name}\\s*[:=]\\s*[^;\\n]+`,
-        'g'
-      )
-      modifiedCode = modifiedCode.replace(
-        pattern,
-        `const ${param.name} = ${JSON.stringify(param.value)}`
-      )
-    })
-
-    return modifiedCode
-  }
-
-  /**
-   * Extract function name from code
-   */
   private extractAlgorithmName(code: string): string | null {
-    // Try to find function name
     const functionMatch = code.match(/function\s+(\w+)/)
     if (functionMatch) return functionMatch[1]
 
-    // Try to find const function name
     const constMatch = code.match(/const\s+(\w+)\s*=/)
     if (constMatch) return constMatch[1]
 
     return null
   }
 
-  /**
-   * Generate unique algorithm ID
-   */
   private generateId(): string {
     return `algo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
   }
 
-  /**
-   * Store algorithm in conversation context for export
-   */
   private async storeAlgorithmInContext(userId: string, algorithm: Algorithm): Promise<void> {
     try {
-      // Prepare algorithm data for storage (exclude compiled function)
       const algorithmData = {
         id: algorithm.id,
         name: algorithm.name,
@@ -533,7 +384,8 @@ export class AlgorithmManager {
         code: algorithm.code,
         parameters: algorithm.parameters,
         complexity: algorithm.complexity,
-        description: algorithm.description
+        description: algorithm.description,
+        functionName: algorithm.functionName
       }
 
       await axios.post(`${this.API_URL}/api/chat/store-algorithm`, {
@@ -541,10 +393,9 @@ export class AlgorithmManager {
         algorithm: algorithmData
       })
 
-      console.log(`📝 Stored algorithm in conversation context for user ${userId}`)
+      console.log(`📝 Stored algorithm in conversation context`)
     } catch (error) {
       console.warn('Failed to store algorithm in context:', error)
-      // Non-critical error, don't throw
     }
   }
 }
