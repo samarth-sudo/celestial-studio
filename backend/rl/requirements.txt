@@ -1,0 +1,19 @@
+# RL Training Dependencies
+# Install with: pip3 install -r requirements.txt
+
+# Genesis physics engine
+genesis-world>=0.2.4
+
+# PPO training (IMPORTANT: Use rsl-rl-lib, NOT rsl-rl)
+rsl-rl-lib==2.2.4
+
+# Deep learning
+torch>=2.0.0
+
+# Logging and visualization
+tensorboard
+wandb
+
+# Math and utilities
+numpy
+pyyaml

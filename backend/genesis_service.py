@@ -114,6 +114,10 @@ class GenesisSimulation:
         self.step_count = 0
         self.start_time = 0.0
 
+        # Cameras for rendering (Genesis requires explicit camera objects)
+        self.cameras: Dict[str, Any] = {}  # camera_name -> camera object
+        self.active_camera: str = "main"  # Currently active camera
+
         # Frame capture
         self.last_frame: Optional[np.ndarray] = None
         self.last_frame_time = 0.0
@@ -161,6 +165,63 @@ class GenesisSimulation:
         # Fallback to CPU
         self.config.backend = BackendType.CPU
         logger.info("💻 Using CPU backend (slower)")
+
+    def _create_cameras(self):
+        """
+        Create multiple cameras for different viewpoints
+
+        Cameras:
+        - main: Third-person view (default)
+        - fpv: First-person view (attached to robot)
+        - top: Top-down view
+        - debug: Debug/close-up view
+        """
+        if not GENESIS_AVAILABLE or self.scene is None:
+            return
+
+        logger.info("Creating cameras for rendering...")
+
+        # Main camera - third-person view
+        self.cameras["main"] = self.scene.add_camera(
+            res=(self.config.render_width, self.config.render_height),
+            pos=(3.5, 0.0, 2.5),
+            lookat=(0.0, 0.0, 0.5),
+            fov=40,
+            GUI=False,  # CRITICAL: Don't show in viewer, just render to buffer
+        )
+        logger.info("✅ Main camera created (third-person)")
+
+        # FPV camera - will be attached to robot later
+        self.cameras["fpv"] = self.scene.add_camera(
+            res=(1280, 720),  # Lower res for FPV (faster)
+            pos=(0.0, 0.0, 0.5),  # Default position, will be attached
+            lookat=(1.0, 0.0, 0.5),
+            fov=60,  # Wider FOV for FPV
+            GUI=False,
+        )
+        logger.info("✅ FPV camera created (will attach to robot)")
+
+        # Top-down camera
+        self.cameras["top"] = self.scene.add_camera(
+            res=(1280, 720),
+            pos=(0.0, 0.0, 5.0),  # 5m above ground
+            lookat=(0.0, 0.0, 0.0),
+            fov=60,
+            GUI=False,
+        )
+        logger.info("✅ Top-down camera created")
+
+        # Debug camera - close-up view
+        self.cameras["debug"] = self.scene.add_camera(
+            res=(640, 480),  # Low res for debug
+            pos=(1.0, 1.0, 1.0),
+            lookat=(0.0, 0.0, 0.5),
+            fov=45,
+            GUI=False,
+        )
+        logger.info("✅ Debug camera created")
+
+        logger.info(f"📷 Created {len(self.cameras)} cameras")
 
     def initialize(self):
         """Initialize Genesis engine"""
@@ -210,6 +271,9 @@ class GenesisSimulation:
 
         # Add ground plane
         self.scene.add_entity(gs.morphs.Plane())
+
+        # Create cameras for rendering (CRITICAL: cameras must be created for frame capture)
+        self._create_cameras()
 
         self.is_initialized = True
         logger.info("✅ Genesis initialized successfully")
@@ -490,16 +554,37 @@ class GenesisSimulation:
         self.stop()
 
     def _capture_frame(self) -> Optional[np.ndarray]:
-        """Capture current frame from Genesis viewer"""
+        """
+        Capture current frame from active Genesis camera
+
+        Returns:
+            RGB frame as numpy array (H, W, 3) with dtype uint8, or None if capture fails
+        """
         try:
-            # Get frame from scene
-            # Note: This requires Genesis viewer to be running (even headless)
-            if hasattr(self.scene, 'viewer') and self.scene.viewer is not None:
-                frame = self.scene.viewer.render()
-                return frame
-            else:
-                logger.warning("Viewer not available for frame capture")
+            # Get active camera
+            if self.active_camera not in self.cameras:
+                logger.warning(f"Active camera '{self.active_camera}' not found, using 'main'")
+                self.active_camera = "main"
+
+            if "main" not in self.cameras:
+                logger.error("No cameras available for frame capture")
                 return None
+
+            camera = self.cameras[self.active_camera]
+
+            # Render frame from camera (CORRECT Genesis API)
+            # Returns: (rgb, depth, segmentation, normal) tuple
+            # We only need RGB for video streaming
+            rgb, _, _, _ = camera.render(
+                rgb=True,
+                depth=False,
+                segmentation=False,
+                normal=False
+            )
+
+            # rgb is numpy array with shape (H, W, 3) and dtype uint8
+            return rgb
+
         except Exception as e:
             logger.error(f"Frame capture failed: {e}")
             return None
@@ -536,6 +621,237 @@ class GenesisSimulation:
 
         return base64.b64encode(jpeg_bytes).decode('utf-8')
 
+    def set_active_camera(self, camera_name: str) -> bool:
+        """
+        Switch to a different camera
+
+        Args:
+            camera_name: Camera name ("main", "fpv", "top", "debug")
+
+        Returns:
+            True if camera switched successfully, False otherwise
+        """
+        if camera_name in self.cameras:
+            self.active_camera = camera_name
+            logger.info(f"📷 Switched to {camera_name} camera")
+            return True
+        else:
+            logger.warning(f"Camera '{camera_name}' not found. Available: {list(self.cameras.keys())}")
+            return False
+
+    def get_available_cameras(self) -> List[str]:
+        """Get list of available camera names"""
+        return list(self.cameras.keys())
+
+    def attach_fpv_camera(self, robot_id: str) -> bool:
+        """
+        Attach FPV camera to a robot for first-person view
+
+        Args:
+            robot_id: ID of robot to attach camera to
+
+        Returns:
+            True if attached successfully, False otherwise
+        """
+        if robot_id not in self.robots:
+            logger.error(f"Robot {robot_id} not found")
+            return False
+
+        if "fpv" not in self.cameras:
+            logger.error("FPV camera not available")
+            return False
+
+        try:
+            robot = self.robots[robot_id]
+            fpv_camera = self.cameras["fpv"]
+
+            # Create offset transformation for camera mount
+            # Position camera slightly forward and up from robot base
+            import genesis.utils.geom as gu
+            trans = np.array([0.2, 0.0, 0.3])  # 0.2m forward, 0.3m up
+            R = np.eye(3)  # No rotation offset
+            offset_T = gu.trans_R_to_T(trans, R)
+
+            # Attach camera to robot base link
+            # Note: This works for entities with links. For simple boxes, we'll use follow_entity
+            if hasattr(robot, 'links') and len(robot.links) > 0:
+                fpv_camera.attach(robot.links[0], offset_T)
+                logger.info(f"📷 FPV camera attached to {robot_id} (rigid mount)")
+            else:
+                # Fallback: use follow_entity for simple geometries
+                fpv_camera.follow_entity(robot, fix_orientation=False)
+                logger.info(f"📷 FPV camera following {robot_id} (tracking mode)")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to attach FPV camera: {e}")
+            return False
+
+    def apply_robot_action(
+        self,
+        robot_id: str,
+        action: List[float],
+        robot_type: Optional[RobotType] = None
+    ) -> bool:
+        """
+        Apply action to robot (for teleoperation)
+
+        Args:
+            robot_id: ID of robot
+            action: Action vector (meaning depends on robot type)
+                - Mobile: [vx, vy, vz] linear velocity
+                - Arm: joint positions or velocities
+                - Drone: [thrust, roll, pitch, yaw]
+            robot_type: Type of robot (auto-detected if None)
+
+        Returns:
+            True if action applied successfully
+        """
+        if robot_id not in self.robots:
+            logger.error(f"Robot {robot_id} not found")
+            return False
+
+        try:
+            robot = self.robots[robot_id]
+
+            # For simple geometries (Box, Sphere), directly set velocity
+            if hasattr(robot, 'set_vel'):
+                # Mobile robot: action = [vx, vy, angular_vel]
+                if len(action) >= 2:
+                    robot.set_vel(np.array([action[0], action[1], 0.0]))
+
+                    # Set angular velocity if provided
+                    if len(action) >= 3 and hasattr(robot, 'set_ang'):
+                        robot.set_ang(np.array([0.0, 0.0, action[2]]))
+
+                logger.debug(f"Applied velocity to {robot_id}: {action}")
+                return True
+
+            # For robots with DOFs (URDF/MJCF), use joint control
+            elif hasattr(robot, 'control_dofs_position'):
+                # Get number of DOFs
+                if hasattr(robot, 'n_dofs'):
+                    n_dofs = robot.n_dofs
+                    dofs_idx = list(range(n_dofs))
+
+                    # Trim action to match DOFs
+                    action_array = np.array(action[:n_dofs])
+
+                    # Apply position control
+                    robot.control_dofs_position(action_array, dofs_idx)
+                    logger.debug(f"Applied joint positions to {robot_id}")
+                    return True
+                else:
+                    logger.warning(f"Robot {robot_id} has DOF control but n_dofs not found")
+                    return False
+
+            else:
+                logger.warning(f"Robot {robot_id} doesn't support known control methods")
+                return False
+
+        except Exception as e:
+            logger.error(f"Failed to apply action to {robot_id}: {e}")
+            return False
+
+    def get_robot_state(self, robot_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get current state of a robot
+
+        Returns:
+            Dictionary with position, velocity, orientation, etc.
+        """
+        if robot_id not in self.robots:
+            return None
+
+        try:
+            robot = self.robots[robot_id]
+            state = {}
+
+            # Get position
+            if hasattr(robot, 'get_pos'):
+                pos = robot.get_pos()
+                state['position'] = pos.tolist() if isinstance(pos, np.ndarray) else list(pos)
+            else:
+                state['position'] = [0, 0, 0]
+
+            # Get velocity
+            if hasattr(robot, 'get_vel'):
+                vel = robot.get_vel()
+                state['velocity'] = vel.tolist() if isinstance(vel, np.ndarray) else list(vel)
+            else:
+                state['velocity'] = [0, 0, 0]
+
+            # Get quaternion
+            if hasattr(robot, 'get_quat'):
+                quat = robot.get_quat()
+                state['quaternion'] = quat.tolist() if isinstance(quat, np.ndarray) else list(quat)
+            else:
+                state['quaternion'] = [0, 0, 0, 1]
+
+            # Get angular velocity
+            if hasattr(robot, 'get_ang'):
+                ang = robot.get_ang()
+                state['angular_velocity'] = ang.tolist() if isinstance(ang, np.ndarray) else list(ang)
+            else:
+                state['angular_velocity'] = [0, 0, 0]
+
+            # Get DOF states if available
+            if hasattr(robot, 'get_dofs_position') and hasattr(robot, 'n_dofs'):
+                n_dofs = robot.n_dofs
+                dofs_idx = list(range(n_dofs))
+                joint_pos = robot.get_dofs_position(dofs_idx)
+                state['joint_positions'] = joint_pos.tolist() if isinstance(joint_pos, np.ndarray) else list(joint_pos)
+
+                if hasattr(robot, 'get_dofs_velocity'):
+                    joint_vel = robot.get_dofs_velocity(dofs_idx)
+                    state['joint_velocities'] = joint_vel.tolist() if isinstance(joint_vel, np.ndarray) else list(joint_vel)
+
+            return state
+
+        except Exception as e:
+            logger.error(f"Failed to get state for {robot_id}: {e}")
+            return None
+
+    def set_robot_position(
+        self,
+        robot_id: str,
+        position: Tuple[float, float, float],
+        quaternion: Optional[Tuple[float, float, float, float]] = None
+    ) -> bool:
+        """
+        Set robot position (hard reset, violates physics)
+
+        Args:
+            robot_id: ID of robot
+            position: (x, y, z) position
+            quaternion: (x, y, z, w) orientation (optional)
+
+        Returns:
+            True if position set successfully
+        """
+        if robot_id not in self.robots:
+            logger.error(f"Robot {robot_id} not found")
+            return False
+
+        try:
+            robot = self.robots[robot_id]
+
+            # Set position
+            if hasattr(robot, 'set_pos'):
+                robot.set_pos(np.array(position))
+
+            # Set quaternion if provided
+            if quaternion and hasattr(robot, 'set_quat'):
+                robot.set_quat(np.array(quaternion))
+
+            logger.info(f"Set position for {robot_id}: {position}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to set position for {robot_id}: {e}")
+            return False
+
     def _get_state(self) -> Dict[str, Any]:
         """Get current simulation state"""
         state = {
@@ -547,17 +863,10 @@ class GenesisSimulation:
         }
 
         # Get robot states
-        for robot_id, robot in self.robots.items():
-            try:
-                # TODO: Extract actual state from Genesis entity
-                # For now, return placeholder
-                state['robots'][robot_id] = {
-                    'position': [0, 0, 0],
-                    'orientation': [0, 0, 0, 1],
-                    'velocity': [0, 0, 0],
-                }
-            except Exception as e:
-                logger.error(f"Failed to get state for {robot_id}: {e}")
+        for robot_id in self.robots.keys():
+            robot_state = self.get_robot_state(robot_id)
+            if robot_state:
+                state['robots'][robot_id] = robot_state
 
         return state
 

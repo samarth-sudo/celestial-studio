@@ -1,334 +1,29 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
-import { Canvas, useThree } from '@react-three/fiber'
-import { OrbitControls, Grid, Environment } from '@react-three/drei'
-import { Physics, RigidBody } from '@react-three/rapier'
-import { Vector3, Raycaster, Plane, Vector2 } from 'three'
-import * as THREE from 'three'
-import MobileRobot from './robots/MobileRobot'
-import RoboticArm from './robots/RoboticArm'
-import Drone from './robots/Drone'
-import SceneObject from './SceneObject'
-import URDFRobot from './URDFRobot'
-import IsaacSimulationPanel from './IsaacSimulationPanel'
+import { useState, useEffect } from 'react'
+import GenesisViewer from './GenesisViewer'
 import SceneEditor, { type EditorTool } from './SceneEditor'
-import PathVisualizer from './PathVisualizer'
-import CameraViewWindow from './CameraViewWindow'
-import ObjectPalette from './ObjectPalette'
-import PathExecutionPanel from './PathExecutionPanel'
 import AlgorithmControls from './AlgorithmControls'
-import AlgorithmDebugOverlay from './AlgorithmDebugOverlay'
-import { getAlgorithmManager } from '../services/AlgorithmManager'
-import { AStarPathPlanner } from '../utils/pathPlanning'
-import type { ComputedPath } from '../types/PathPlanning'
+import IsaacSimulationPanel from './IsaacSimulationPanel'
 import './Simulator.css'
 
-type SimulationMode = 'rapier' | 'isaac'
+type SimulationMode = 'genesis' | 'isaac'
 
 interface SimulatorProps {
   sceneConfig?: any
   onSceneChange?: (sceneConfig: any) => void
 }
 
-// SceneExtractor component to capture Three.js scene reference
-interface SceneExtractorProps {
-  onSceneReady: (scene: THREE.Scene) => void
-}
-
-function SceneExtractor({ onSceneReady }: SceneExtractorProps) {
-  const { scene } = useThree()
-
-  useEffect(() => {
-    onSceneReady(scene)
-  }, [scene, onSceneReady])
-
-  return null
-}
-
-// ClickHandler component for proper 3D raycasting
-interface ClickHandlerProps {
-  activeTool: EditorTool
-  onAddObject: (type: string, position: Vector3) => void
-}
-
-function ClickHandler({ activeTool, onAddObject }: ClickHandlerProps) {
-  const { camera, raycaster, gl } = useThree()
-
-  const handleClick = (event: any) => {
-    // Only process clicks when a tool is active (not 'select')
-    if (activeTool === 'select' || activeTool === 'delete') return
-
-    // Stop event propagation to prevent OrbitControls from interfering
-    event.stopPropagation()
-
-    // Get canvas position and size
-    const rect = gl.domElement.getBoundingClientRect()
-
-    // Get normalized device coordinates (-1 to 1) relative to canvas
-    const mouse = new Vector2()
-    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
-    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
-
-    // Update raycaster with camera and mouse position
-    raycaster.setFromCamera(mouse, camera)
-
-    // Define ground plane at y = 0
-    const groundPlane = new Plane(new Vector3(0, 1, 0), 0)
-
-    // Find intersection with ground plane
-    const intersectionPoint = new Vector3()
-    raycaster.ray.intersectPlane(groundPlane, intersectionPoint)
-
-    if (intersectionPoint) {
-      // Determine object type based on active tool
-      let objectType = ''
-      if (activeTool === 'add_origin') objectType = 'origin'
-      else if (activeTool === 'add_destination') objectType = 'destination'
-      else if (activeTool === 'add_box') objectType = 'box'
-      else if (activeTool === 'add_cylinder') objectType = 'cylinder'
-
-      if (objectType) {
-        onAddObject(objectType, intersectionPoint)
-      }
-    }
-  }
-
-  // Return an invisible plane that covers the entire scene for click detection
-  return (
-    <mesh
-      rotation={[-Math.PI / 2, 0, 0]}
-      position={[0, 0, 0]}
-      onClick={handleClick}
-      visible={false}
-    >
-      <planeGeometry args={[100, 100]} />
-      <meshBasicMaterial transparent opacity={0} />
-    </mesh>
-  )
-}
-
 export default function Simulator({ sceneConfig, onSceneChange }: SimulatorProps) {
-  const [mode, setMode] = useState<SimulationMode>('rapier')
+  const [mode, setMode] = useState<SimulationMode>('genesis')
   const [showIsaacPanel, setShowIsaacPanel] = useState(false)
-  const [activeTool, setActiveTool] = useState<EditorTool>('select')
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [simulationSpeed, setSimulationSpeed] = useState(1)
-  const [editableObjects, setEditableObjects] = useState<any[]>([])
-  const [undoStack, setUndoStack] = useState<any[]>([])
-
-  // Three.js scene reference for CameraView
-  const [threeScene, setThreeScene] = useState<THREE.Scene | null>(null)
-
-  // Path planning state
-  const [computedPath, setComputedPath] = useState<ComputedPath | null>(null)
-  const [pathPlanner, setPathPlanner] = useState<AStarPathPlanner | null>(null)
-  const [activeAlgorithmId, setActiveAlgorithmId] = useState<string>('builtin-astar')
-  const [showObjectPanel, setShowObjectPanel] = useState(true)
-  const [showPathStats, setShowPathStats] = useState(true)
-  const [cameraMode, setCameraMode] = useState<'orbit' | 'fpv'>('orbit')
-  const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null)
-
-  // New window states
-  const [showCameraView, setShowCameraView] = useState(false)
-  const [showObjectPalette, setShowObjectPalette] = useState(false)
-  const [showPathExecution, setShowPathExecution] = useState(false)
+  const [isSimulationRunning, setIsSimulationRunning] = useState(false)
+  const [genesisWsUrl, setGenesisWsUrl] = useState<string>('')
   const [showAlgorithmControls, setShowAlgorithmControls] = useState(false)
 
-  // Robot position for FPV camera
-  const [robotPosition, setRobotPosition] = useState<[number, number, number]>([0, 0.5, 0])
-  const [robotRotation, setRobotRotation] = useState<[number, number, number]>([0, 0, 0])
+  // Genesis simulation state
+  const [genesisSceneId, setGenesisSceneId] = useState<string | null>(null)
 
-  // Robot waypoint tracking for path execution
-  const [currentWaypoint, setCurrentWaypoint] = useState(0)
-  const [totalWaypoints, setTotalWaypoints] = useState(0)
-
-  // Algorithm status tracking for debug overlay
-  const [algorithmActive, setAlgorithmActive] = useState(false)
-  const [algorithmName, setAlgorithmName] = useState<string | undefined>()
-
-  // Debug overlay visibility
-  const [showDebugOverlay, setShowDebugOverlay] = useState(true)
-
-  // Debug FPV mode initialization
-  useEffect(() => {
-    if (showCameraView) {
-      console.log('🎥 FPV Camera View Opened:', {
-        sceneAvailable: !!threeScene,
-        robotPosition,
-        robotRotation,
-        sceneConfig: sceneConfig ? 'Available' : 'Missing',
-        editableObjectsCount: editableObjects?.length || 0
-      })
-
-      if (!threeScene) {
-        console.warn('⚠️ FPV Warning: Three.js scene not initialized yet')
-      }
-    }
-  }, [showCameraView, threeScene, robotPosition, robotRotation, sceneConfig, editableObjects])
-
-  // Callback to update robot position from robot components
-  const handleRobotPositionUpdate = (
-    position: [number, number, number],
-    rotation: [number, number, number]
-  ) => {
-    setRobotPosition(position)
-    setRobotRotation(rotation)
-  }
-
-  // Callback to update waypoint progress from robot components
-  const handleWaypointUpdate = (current: number, total: number) => {
-    setCurrentWaypoint(current)
-    setTotalWaypoints(total)
-  }
-
-  // Callback to update algorithm status from robot components
-  const handleAlgorithmStatusUpdate = (active: boolean, name?: string) => {
-    setAlgorithmActive(active)
-    setAlgorithmName(name)
-  }
-
-  const manager = getAlgorithmManager()
-
-  // Determine if we have any content to render
-  const hasContent = sceneConfig || editableObjects.length > 0
-
-  // Initialize A* path planner
-  useEffect(() => {
-    const planner = new AStarPathPlanner({
-      gridSize: 0.5,
-      worldBounds: {
-        min: new THREE.Vector3(-10, 0, -10),
-        max: new THREE.Vector3(10, 0, 10)
-      },
-      obstacles: []
-    })
-    setPathPlanner(planner)
-  }, [])
-
-  // Extract origin, destination, and obstacles from editableObjects
-  const extractPathPlanningElements = () => {
-    let origin: THREE.Vector3 | null = null
-    let destination: THREE.Vector3 | null = null
-    const obstacles: Array<{ position: THREE.Vector3; radius: number }> = []
-
-    editableObjects.forEach((obj) => {
-      if (obj.type === 'origin') {
-        origin = new THREE.Vector3(obj.position[0], obj.position[1], obj.position[2])
-      } else if (obj.type === 'destination') {
-        destination = new THREE.Vector3(obj.position[0], obj.position[1], obj.position[2])
-      } else if (obj.type === 'box' || obj.type === 'cylinder') {
-        const radius = obj.type === 'box'
-          ? Math.max(obj.size?.[0] || 0.5, obj.size?.[2] || 0.5) / 2
-          : obj.radius || 0.3
-        obstacles.push({
-          position: new THREE.Vector3(obj.position[0], obj.position[1], obj.position[2]),
-          radius: radius + 0.2 // Safety margin
-        })
-      }
-    })
-
-    return { origin, destination, obstacles }
-  }
-
-  // Auto-compute path when objects change
-  useEffect(() => {
-    if (!pathPlanner) return
-
-    const { origin, destination, obstacles } = extractPathPlanningElements()
-
-    if (!origin || !destination) {
-      setComputedPath(null)
-      return
-    }
-
-    try {
-      // Update path planner with new obstacles
-      pathPlanner.updateObstacles(obstacles)
-
-      let waypoints: THREE.Vector3[] = []
-      let algorithmName = 'A*'
-
-      // Check which algorithm to use - prioritize custom path planning algorithms
-      const pathPlanningAlgos = manager.getAlgorithmsByType('robot-1', 'path_planning')
-
-      if (activeAlgorithmId === 'builtin-astar' && pathPlanningAlgos.length === 0) {
-        // Use built-in A* only if no custom path planning algorithms are active
-        waypoints = pathPlanner.findPath(origin, destination)
-        algorithmName = 'A* (Built-in)'
-      } else if (pathPlanningAlgos.length > 0) {
-        // Use the first active path planning algorithm
-        const algorithm = pathPlanningAlgos[0]
-        try {
-          algorithmName = algorithm.name
-          waypoints = manager.executePathPlanning(
-            algorithm.id,
-            origin,
-            destination,
-            obstacles
-          )
-          console.log(`✅ Custom algorithm "${algorithmName}" generated path`)
-        } catch (error: any) {
-          console.error(`❌ Custom algorithm failed, falling back to A*:`, error.message)
-          waypoints = pathPlanner.findPath(origin, destination)
-          algorithmName = 'A* (Fallback)'
-        }
-      } else {
-        // Fallback to built-in A* if activeAlgorithmId doesn't exist
-        const algorithm = manager.getAlgorithm(activeAlgorithmId)
-        if (algorithm && algorithm.type === 'path_planning') {
-          try {
-            algorithmName = algorithm.name
-            waypoints = manager.executePathPlanning(
-              activeAlgorithmId,
-              origin,
-              destination,
-              obstacles
-            )
-            console.log(`✅ Custom algorithm "${algorithmName}" generated path`)
-          } catch (error: any) {
-            console.error(`❌ Custom algorithm failed, falling back to A*:`, error.message)
-            waypoints = pathPlanner.findPath(origin, destination)
-            algorithmName = 'A* (Fallback)'
-          }
-        } else {
-          waypoints = pathPlanner.findPath(origin, destination)
-          algorithmName = 'A* (Built-in)'
-        }
-      }
-
-      if (waypoints.length > 0) {
-        // Calculate path length
-        let length = 0
-        for (let i = 1; i < waypoints.length; i++) {
-          length += waypoints[i].distanceTo(waypoints[i - 1])
-        }
-
-        const path: ComputedPath = {
-          waypoints,
-          segments: waypoints.slice(0, -1).map((p, i) => ({
-            start: p,
-            end: waypoints[i + 1]
-          })),
-          length,
-          estimatedTime: length / 1.0, // Assuming 1 m/s speed
-          isValid: true,
-          algorithmUsed: algorithmName
-        }
-        setComputedPath(path)
-      } else {
-        setComputedPath({
-          waypoints: [],
-          segments: [],
-          length: 0,
-          estimatedTime: 0,
-          isValid: false,
-          algorithmUsed: algorithmName
-        })
-      }
-    } catch (error) {
-      console.error('Path planning error:', error)
-      setComputedPath(null)
-    }
-  }, [editableObjects, activeAlgorithmId, pathPlanner, manager])
+  // Determine if we have content to render
+  const hasContent = sceneConfig !== undefined
 
   const handleModeSwitch = (newMode: SimulationMode) => {
     setMode(newMode)
@@ -337,268 +32,161 @@ export default function Simulator({ sceneConfig, onSceneChange }: SimulatorProps
     }
   }
 
-  const addObject = (type: string, position: Vector3) => {
-    // Save current state for undo
-    setUndoStack(prev => [...prev, [...editableObjects]])
+  const handleStartGenesisSimulation = async () => {
+    try {
+      // Initialize Genesis scene
+      const response = await fetch('http://localhost:8000/api/genesis/init', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          backend: 'auto',  // Auto-detect Metal/CUDA/CPU
+          show_viewer: false
+        })
+      })
 
-    // Determine Y position based on object type
-    const yPosition = type === 'origin' || type === 'destination' ? 0.5 : 1
+      const data = await response.json()
 
-    const newObject: any = {
-      id: `${type}_${Date.now()}`,
-      type,
-      position: [position.x, yPosition, position.z]
+      if (data.status === 'initialized') {
+        // Add robot based on scene config
+        const robotType = sceneConfig?.robot?.type || 'mobile_robot'
+        const robotMap = {
+          'mobile_robot': 'mobile',
+          'robotic_arm': 'arm',
+          'quadcopter': 'drone'
+        }
+
+        const addRobotResponse = await fetch('http://localhost:8000/api/genesis/robot/add', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            robot_type: robotMap[robotType as keyof typeof robotMap] || 'mobile',
+            position: [0, 0, 1],
+            robot_id: 'robot-1'
+          })
+        })
+
+        const robotData = await addRobotResponse.json()
+
+        // Build the scene
+        const buildResponse = await fetch('http://localhost:8000/api/genesis/scene/build', {
+          method: 'POST'
+        })
+
+        // Start simulation
+        const controlResponse = await fetch('http://localhost:8000/api/genesis/control', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'start'
+          })
+        })
+
+        // Set WebSocket URL for Genesis viewer
+        setGenesisWsUrl('ws://localhost:8000/api/genesis/ws')
+        setIsSimulationRunning(true)
+        console.log('✅ Genesis simulation started')
+      }
+    } catch (error) {
+      console.error('❌ Failed to start Genesis simulation:', error)
     }
-
-    if (type === 'origin') {
-      newObject.color = '#00FF00'
-      newObject.shape = 'sphere'
-      newObject.size = [0.3, 0.3, 0.3]
-    } else if (type === 'destination') {
-      newObject.color = '#FF0000'
-      newObject.shape = 'sphere'
-      newObject.size = [0.3, 0.3, 0.3]
-    } else if (type === 'box') {
-      newObject.color = '#FFA500'
-      newObject.shape = 'box'
-      newObject.size = [0.5, 0.5, 0.5]
-    } else if (type === 'cylinder') {
-      newObject.color = '#808080'
-      newObject.shape = 'cylinder'
-      newObject.radius = 0.3
-      newObject.height = 1.0
-    }
-
-    setEditableObjects(prev => [...prev, newObject])
-
-    // Auto-switch back to select tool after adding
-    setActiveTool('select')
   }
 
-  const handleClearScene = () => {
-    if (confirm('Are you sure you want to clear all objects?')) {
-      setUndoStack(prev => [...prev, [...editableObjects]])
-      setEditableObjects([])
+  const handleStopGenesisSimulation = async () => {
+    try {
+      await fetch('http://localhost:8000/api/genesis/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'stop'
+        })
+      })
+
+      setIsSimulationRunning(false)
+      setGenesisWsUrl('')
+      console.log('🛑 Genesis simulation stopped')
+    } catch (error) {
+      console.error('❌ Failed to stop simulation:', error)
     }
   }
 
-  const handleUndo = () => {
-    if (undoStack.length > 0) {
-      const previousState = undoStack[undoStack.length - 1]
-      setEditableObjects(previousState)
-      setUndoStack(prev => prev.slice(0, -1))
+  const handleResetGenesisSimulation = async () => {
+    try {
+      await fetch('http://localhost:8000/api/genesis/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'reset'
+        })
+      })
+
+      console.log('🔄 Genesis simulation reset')
+    } catch (error) {
+      console.error('❌ Failed to reset simulation:', error)
     }
   }
-
-  const handlePlayPause = () => {
-    setIsPlaying(!isPlaying)
-  }
-
-  const handleStop = () => {
-    setIsPlaying(false)
-    // Reset objects to initial positions
-    // (This would require storing initial state)
-  }
-
-  const handleSpeedChange = (speed: number) => {
-    setSimulationSpeed(speed)
-  }
-
-  // Callback for scene extraction
-  const handleSceneReady = useCallback((scene: THREE.Scene) => {
-    setThreeScene(scene)
-  }, [])
 
   return (
     <div className="simulator">
-      {/* Scene Editor Toolbar */}
-      <SceneEditor
-        activeTool={activeTool}
-        onToolChange={setActiveTool}
-        onClearScene={handleClearScene}
-        onUndo={handleUndo}
-        objectCount={editableObjects.length + (sceneConfig?.objects?.length || 0)}
-      />
-
-      {/* Object Window Panel */}
-      {hasContent && showObjectPanel && (
-        <div className="object-panel">
-          <div className="panel-header">
-            <h3>Scene Objects</h3>
-            <button
-              className="panel-close"
-              onClick={() => setShowObjectPanel(false)}
-              title="Close panel"
-            >
-              ×
-            </button>
-          </div>
-          <div className="object-list">
-            {editableObjects.length === 0 ? (
-              <p className="empty-message">No objects placed</p>
-            ) : (
-              editableObjects.map((obj) => (
-                <div
-                  key={obj.id}
-                  className={`object-item ${selectedObjectId === obj.id ? 'selected' : ''}`}
-                  onClick={() => setSelectedObjectId(obj.id)}
-                >
-                  <div className="object-icon" style={{ backgroundColor: obj.color || '#888' }}>
-                    {obj.type === 'origin' && '🟢'}
-                    {obj.type === 'destination' && '🔴'}
-                    {obj.type === 'box' && '📦'}
-                    {obj.type === 'cylinder' && '🛢️'}
-                  </div>
-                  <div className="object-info">
-                    <div className="object-type">{obj.type}</div>
-                    <div className="object-position">
-                      ({obj.position[0].toFixed(1)}, {obj.position[1].toFixed(1)}, {obj.position[2].toFixed(1)})
-                    </div>
-                  </div>
-                  <button
-                    className="object-delete"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setEditableObjects(prev => prev.filter(o => o.id !== obj.id))
-                      if (selectedObjectId === obj.id) setSelectedObjectId(null)
-                    }}
-                    title="Delete object"
-                  >
-                    🗑️
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Path Stats Panel */}
-      {hasContent && showPathStats && computedPath && computedPath.isValid && (
-        <div className="path-stats-panel">
-          <div className="panel-header">
-            <h3>Path Information</h3>
-            <button
-              className="panel-close"
-              onClick={() => setShowPathStats(false)}
-              title="Close panel"
-            >
-              ×
-            </button>
-          </div>
-          <div className="stats-content">
-            <div className="stat-item">
-              <span className="stat-label">Algorithm:</span>
-              <span className="stat-value">{computedPath.algorithmUsed}</span>
-            </div>
-            <div className="stat-item">
-              <span className="stat-label">Path Length:</span>
-              <span className="stat-value">{computedPath.length.toFixed(2)} m</span>
-            </div>
-            <div className="stat-item">
-              <span className="stat-label">Est. Time:</span>
-              <span className="stat-value">{computedPath.estimatedTime.toFixed(2)} s</span>
-            </div>
-            <div className="stat-item">
-              <span className="stat-label">Waypoints:</span>
-              <span className="stat-value">{computedPath.waypoints.length}</span>
-            </div>
-          </div>
-
-          {/* Algorithm Selector */}
-          <div className="algorithm-selector">
-            <label>Path Algorithm:</label>
-            <select
-              value={activeAlgorithmId}
-              onChange={(e) => setActiveAlgorithmId(e.target.value)}
-            >
-              <option value="builtin-astar">Built-in A*</option>
-              {manager.getAllAlgorithms()
-                .filter(a => a.type === 'path_planning')
-                .map(algo => (
-                  <option key={algo.id} value={algo.id}>
-                    {algo.name}
-                  </option>
-                ))}
-            </select>
-            <button
-              className="generate-algorithm-btn"
-              onClick={() => setShowAlgorithmControls(!showAlgorithmControls)}
-              title="Generate or manage algorithms"
-            >
-              {showAlgorithmControls ? '✖ Close' : '⚡ Generate'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Camera Controls Panel */}
+      {/* Mode Switcher */}
       {hasContent && (
-        <div className="camera-controls-panel">
+        <div className="mode-switcher">
           <button
-            className={`camera-mode-btn ${!showCameraView ? 'active' : ''}`}
-            onClick={() => setShowCameraView(false)}
-            title="Main orbital camera view"
+            className={`mode-button ${mode === 'genesis' ? 'active' : ''}`}
+            onClick={() => handleModeSwitch('genesis')}
+            title="GPU-accelerated Genesis simulation (physics-accurate)"
           >
-            🔄 Orbit
+            <span className="mode-icon">🎯</span>
+            Genesis Sim
           </button>
           <button
-            className={`camera-mode-btn ${showCameraView ? 'active' : ''}`}
-            onClick={() => setShowCameraView(!showCameraView)}
-            title="Toggle robot FPV camera window"
+            className={`mode-button ${mode === 'isaac' ? 'active' : ''}`}
+            onClick={() => handleModeSwitch('isaac')}
+            title="GPU-accelerated Isaac Lab simulation (RL training)"
           >
-            👁️ FPV
-          </button>
-          <button
-            className={`camera-mode-btn ${showObjectPalette ? 'active' : ''}`}
-            onClick={() => setShowObjectPalette(!showObjectPalette)}
-            title="Toggle object palette"
-          >
-            ➕ Objects
-          </button>
-          <button
-            className={`camera-mode-btn ${showPathExecution ? 'active' : ''}`}
-            onClick={() => setShowPathExecution(!showPathExecution)}
-            title="Toggle path execution panel"
-          >
-            🎯 Path
+            <span className="mode-icon">🤖</span>
+            Isaac Lab
           </button>
         </div>
       )}
 
-      {/* Camera View Window (FPV with CV Detection) */}
-      <CameraViewWindow
-        isVisible={showCameraView}
-        onClose={() => setShowCameraView(false)}
-        robotPosition={robotPosition}
-        robotRotation={robotRotation}
-        sceneConfig={sceneConfig}
-        editableObjects={editableObjects}
-        scene={threeScene}
-      />
-
-      {/* Object Palette Window */}
-      <ObjectPalette
-        isVisible={showObjectPalette}
-        onClose={() => setShowObjectPalette(false)}
-        activeTool={activeTool}
-        onToolSelect={setActiveTool}
-      />
-
-      {/* Path Execution Panel */}
-      <PathExecutionPanel
-        isVisible={showPathExecution}
-        onClose={() => setShowPathExecution(false)}
-        path={computedPath}
-        isPlaying={isPlaying}
-        onPlay={handlePlayPause}
-        onPause={handlePlayPause}
-        onStop={handleStop}
-        currentWaypoint={currentWaypoint}
-        totalWaypoints={totalWaypoints}
-        distanceRemaining={computedPath?.length ? (computedPath.length * (totalWaypoints - currentWaypoint) / totalWaypoints) : 0}
-        status={currentWaypoint >= totalWaypoints - 1 && totalWaypoints > 0 ? 'completed' : isPlaying ? 'moving' : 'idle'}
-      />
+      {/* Simulation Controls for Genesis */}
+      {hasContent && mode === 'genesis' && (
+        <div className="playback-controls">
+          {!isSimulationRunning ? (
+            <button
+              className="playback-button"
+              onClick={handleStartGenesisSimulation}
+              title="Start Genesis simulation"
+            >
+              ▶️ Start Simulation
+            </button>
+          ) : (
+            <>
+              <button
+                className="playback-button"
+                onClick={handleStopGenesisSimulation}
+                title="Stop simulation"
+              >
+                ⏹️ Stop
+              </button>
+              <button
+                className="playback-button"
+                onClick={handleResetGenesisSimulation}
+                title="Reset simulation"
+              >
+                🔄 Reset
+              </button>
+            </>
+          )}
+          <button
+            className="playback-button"
+            onClick={() => setShowAlgorithmControls(!showAlgorithmControls)}
+            title="Generate or manage algorithms"
+          >
+            {showAlgorithmControls ? '✖ Close Algorithms' : '⚡ Algorithms'}
+          </button>
+        </div>
+      )}
 
       {/* Algorithm Controls Panel */}
       {showAlgorithmControls && sceneConfig && (
@@ -615,73 +203,21 @@ export default function Simulator({ sceneConfig, onSceneChange }: SimulatorProps
               robotType={sceneConfig.robot?.type === 'mobile_robot' ? 'mobile' : sceneConfig.robot?.type === 'robotic_arm' ? 'arm' : 'drone'}
               onAlgorithmApplied={(algorithm) => {
                 console.log('Algorithm applied:', algorithm)
-                // Reload algorithms to update the dropdown
-                setActiveAlgorithmId(algorithm.id)
               }}
             />
           </div>
         </div>
       )}
 
-      {/* Playback Controls */}
-      {hasContent && (
-        <div className="playback-controls">
-          <button
-            className={`playback-button ${isPlaying ? 'playing' : ''}`}
-            onClick={handlePlayPause}
-            title={isPlaying ? 'Pause simulation' : 'Play simulation'}
-          >
-            {isPlaying ? '⏸️' : '▶️'}
-          </button>
-          <button
-            className="playback-button"
-            onClick={handleStop}
-            title="Stop and reset simulation"
-          >
-            ⏹️
-          </button>
-          <div className="speed-control">
-            <label>Speed:</label>
-            <input
-              type="range"
-              min="0.5"
-              max="2"
-              step="0.1"
-              value={simulationSpeed}
-              onChange={(e) => handleSpeedChange(parseFloat(e.target.value))}
-            />
-            <span>{simulationSpeed.toFixed(1)}x</span>
-          </div>
-        </div>
-      )}
-
-      {/* Mode Switcher - Only show when content exists */}
-      {hasContent && (
-        <div className="mode-switcher">
-          <button
-            className={`mode-button ${mode === 'rapier' ? 'active' : ''}`}
-            onClick={() => handleModeSwitch('rapier')}
-            title="Browser-based physics preview (fast)"
-          >
-            <span className="mode-icon">⚡</span>
-            Rapier Preview
-          </button>
-          <button
-            className={`mode-button ${mode === 'isaac' ? 'active' : ''}`}
-            onClick={() => handleModeSwitch('isaac')}
-            title="GPU-accelerated Isaac Lab simulation (accurate)"
-          >
-            <span className="mode-icon">🎯</span>
-            Isaac Lab
-          </button>
-        </div>
-      )}
-
       {!hasContent ? (
         <div className="simulator-empty">
           <div className="empty-message">
-            <h2>🎮 3D Simulator</h2>
-            <p>Use the scene editor to add objects, or generate a robot simulation!</p>
+            <h2>🎮 Genesis Simulator</h2>
+            <p>Generate a robot simulation to see Genesis in action!</p>
+            <p className="tech-note">
+              <strong>Powered by Genesis Engine:</strong> GPU-accelerated physics simulation
+              with 1000x faster rendering than client-side engines.
+            </p>
           </div>
         </div>
       ) : mode === 'isaac' && showIsaacPanel ? (
@@ -689,172 +225,23 @@ export default function Simulator({ sceneConfig, onSceneChange }: SimulatorProps
           sceneConfig={sceneConfig}
           onClose={() => setShowIsaacPanel(false)}
         />
-      ) : (
-        <Canvas
-          camera={{ position: [5, 5, 5], fov: 50 }}
-          shadows
-        >
-          <color attach="background" args={['#1a1a1a']} />
-
-          {/* Lighting */}
-          <ambientLight intensity={0.5} />
-          <directionalLight
-            position={[10, 10, 5]}
-            intensity={1}
-            castShadow
-            shadow-mapSize={[1024, 1024]}
-          />
-
-          <Physics gravity={[0, -9.81, 0]}>
-            {/* Ground */}
-            <Grid
-              args={sceneConfig?.environment?.floor?.size || [20, 20]}
-              cellSize={0.5}
-              cellThickness={0.5}
-              cellColor={'#6f6f6f'}
-              sectionSize={2}
-              sectionThickness={1}
-              sectionColor={'#9d4b4b'}
-              fadeDistance={50}
-              fadeStrength={1}
-              position={[0, 0, 0]}
-            />
-
-            {/* Physical ground plane for collision */}
-            <RigidBody type="fixed" position={[0, -0.25, 0]} colliders="cuboid" friction={0.7}>
-              <mesh>
-                <boxGeometry args={[100, 0.5, 100]} />
-                <meshStandardMaterial transparent opacity={0} />
-              </mesh>
-            </RigidBody>
-
-            {/* Render environment walls if specified */}
-            {sceneConfig?.environment?.walls && (() => {
-              const floorSize = sceneConfig.environment?.floor?.size || [20, 20]
-              const wallHeight = sceneConfig.environment?.wallHeight || 5
-              const wallColor = sceneConfig.environment?.wallColor || '#A0A0A0'
-              const wallThickness = 0.2
-
-              return (
-                <>
-                  {/* Front wall (positive Z) */}
-                  <RigidBody type="fixed" position={[0, wallHeight / 2, floorSize[1] / 2]}>
-                    <mesh castShadow receiveShadow>
-                      <boxGeometry args={[floorSize[0], wallHeight, wallThickness]} />
-                      <meshStandardMaterial color={wallColor} />
-                    </mesh>
-                  </RigidBody>
-
-                  {/* Back wall (negative Z) */}
-                  <RigidBody type="fixed" position={[0, wallHeight / 2, -floorSize[1] / 2]}>
-                    <mesh castShadow receiveShadow>
-                      <boxGeometry args={[floorSize[0], wallHeight, wallThickness]} />
-                      <meshStandardMaterial color={wallColor} />
-                    </mesh>
-                  </RigidBody>
-
-                  {/* Left wall (negative X) */}
-                  <RigidBody type="fixed" position={[-floorSize[0] / 2, wallHeight / 2, 0]}>
-                    <mesh castShadow receiveShadow>
-                      <boxGeometry args={[wallThickness, wallHeight, floorSize[1]]} />
-                      <meshStandardMaterial color={wallColor} />
-                    </mesh>
-                  </RigidBody>
-
-                  {/* Right wall (positive X) */}
-                  <RigidBody type="fixed" position={[floorSize[0] / 2, wallHeight / 2, 0]}>
-                    <mesh castShadow receiveShadow>
-                      <boxGeometry args={[wallThickness, wallHeight, floorSize[1]]} />
-                      <meshStandardMaterial color={wallColor} />
-                    </mesh>
-                  </RigidBody>
-                </>
-              )
-            })()}
-
-            {/* Render scene from conversational chat */}
-            {sceneConfig && (
-              <>
-                {/* Render all scene objects */}
-                {sceneConfig.objects?.map((obj: any, index: number) => (
-                  <SceneObject key={obj.id || `obj-${index}`} object={obj} />
-                ))}
-
-                {/* Render waypoints if present */}
-                {sceneConfig.waypoints?.map((waypoint: any) => (
-                  <SceneObject key={waypoint.id} object={waypoint} />
-                ))}
-
-                {/* Render task markers if present */}
-                {sceneConfig.task_markers?.map((marker: any) => (
-                  <SceneObject key={marker.id} object={marker} />
-                ))}
-
-                {/* Render robot from scene config */}
-                {sceneConfig.robot?.type === 'mobile_robot' && (
-                  <MobileRobot
-                    onPositionUpdate={handleRobotPositionUpdate}
-                    onWaypointUpdate={handleWaypointUpdate}
-                    onAlgorithmStatusUpdate={handleAlgorithmStatusUpdate}
-                    path={computedPath}
-                    isPaused={!isPlaying}
-                    obstacles={extractPathPlanningElements().obstacles}
-                    robotId="robot-1"
-                  />
-                )}
-                {sceneConfig.robot?.type === 'robotic_arm' && (
-                  <RoboticArm />
-                )}
-                {sceneConfig.robot?.type === 'quadcopter' && (
-                  <Drone />
-                )}
-                {sceneConfig.robot?.type === 'urdf_custom' && (
-                  <URDFRobot sceneConfig={sceneConfig} />
-                )}
-              </>
-            )}
-
-            {/* Render user-added editable objects */}
-            {editableObjects.map((obj) => (
-              <SceneObject key={obj.id} object={obj} />
-            ))}
-
-            {/* Path Visualizer - shows computed path */}
-            <PathVisualizer
-              origin={null}  // Don't render origin marker (already rendered via SceneObject)
-              destination={null}  // Don't render destination marker (already rendered via SceneObject)
-              path={computedPath}
-              obstacles={[]}  // Don't render obstacles (already rendered via SceneObject)
-              showGrid={false}
-            />
-          </Physics>
-
-          {/* Extract scene reference for CameraView */}
-          <SceneExtractor onSceneReady={handleSceneReady} />
-
-          {/* Click handler for adding objects */}
-          <ClickHandler activeTool={activeTool} onAddObject={addObject} />
-
-          {/* Camera controls */}
-          <OrbitControls makeDefault />
-
-          {/* Environment lighting */}
-          <Environment preset="city" />
-        </Canvas>
-      )}
-
-      {/* Debug Overlay - Shows real-time robot and algorithm status */}
-      {showDebugOverlay && sceneConfig?.robot?.type === 'mobile_robot' && (
-        <AlgorithmDebugOverlay
-          robotId="robot-1"
-          position={robotPosition}
-          rotation={robotRotation}
-          currentWaypoint={currentWaypoint}
-          totalWaypoints={totalWaypoints}
-          algorithmActive={algorithmActive}
-          algorithmName={algorithmName}
-        />
-      )}
+      ) : mode === 'genesis' ? (
+        <div className="genesis-container">
+          {isSimulationRunning && genesisWsUrl ? (
+            <GenesisViewer wsUrl={genesisWsUrl} />
+          ) : (
+            <div className="genesis-placeholder">
+              <div className="placeholder-content">
+                <h3>🚀 Ready to Simulate</h3>
+                <p>Click "Start Simulation" to run your robot in Genesis</p>
+                <div className="robot-info">
+                  <strong>Robot Type:</strong> {sceneConfig?.robot?.type || 'mobile_robot'}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : null}
     </div>
   )
 }

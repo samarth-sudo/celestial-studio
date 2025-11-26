@@ -1,0 +1,369 @@
+/**
+ * Control Overlay Styles
+ * Modern, clean design for teleoperation UI
+ */
+
+.control-overlay {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: rgba(26, 26, 46, 0.95);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  color: #e0e0e0;
+  max-width: 320px;
+  z-index: 1000;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* Connection Status */
+.connection-status {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-weight: 600;
+}
+
+.connection-status.connected {
+  background: rgba(76, 175, 80, 0.2);
+  color: #4caf50;
+}
+
+.connection-status.disconnected {
+  background: rgba(244, 67, 54, 0.2);
+  color: #f44336;
+}
+
+/* Control Hints */
+.control-hints {
+  margin-top: 10px;
+}
+
+.control-hints h3 {
+  margin: 0 0 16px 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.controls-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.control-group {
+  background: rgba(255, 255, 255, 0.05);
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.control-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #9e9e9e;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.key-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+kbd {
+  display: inline-block;
+  padding: 6px 10px;
+  background: linear-gradient(180deg, #3a3a5a 0%, #2a2a4a 100%);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3),
+              inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  min-width: 32px;
+  text-align: center;
+}
+
+.control-desc {
+  font-size: 12px;
+  color: #b0b0b0;
+  margin-top: 4px;
+}
+
+.universal-controls {
+  border: 1px solid rgba(255, 165, 0, 0.3);
+  background: rgba(255, 165, 0, 0.05);
+}
+
+/* Recording Controls */
+.recording-controls {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.recording-controls h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.record-btn {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.record-btn.start {
+  background: linear-gradient(135deg, #f44336 0%, #e53935 100%);
+  color: white;
+}
+
+.record-btn.start:hover:not(:disabled) {
+  background: linear-gradient(135deg, #e53935 0%, #d32f2f 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(244, 67, 54, 0.4);
+}
+
+.record-btn.stop {
+  background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
+  color: white;
+}
+
+.record-btn.stop:hover {
+  background: linear-gradient(135deg, #f57c00 0%, #ef6c00 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(255, 152, 0, 0.4);
+}
+
+.record-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Recording Active State */
+.recording-active {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.recording-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(244, 67, 54, 0.1);
+  border: 1px solid rgba(244, 67, 54, 0.3);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #f44336;
+}
+
+.pulse-dot {
+  width: 8px;
+  height: 8px;
+  background: #f44336;
+  border-radius: 50%;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(1.2);
+  }
+}
+
+.recording-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.stat {
+  background: rgba(255, 255, 255, 0.05);
+  padding: 8px;
+  border-radius: 6px;
+  text-align: center;
+}
+
+.stat-label {
+  display: block;
+  font-size: 10px;
+  color: #9e9e9e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.stat-value {
+  display: block;
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+}
+
+/* Record Dialog */
+.record-dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  backdrop-filter: blur(4px);
+}
+
+.record-dialog {
+  background: #1a1a2e;
+  padding: 24px;
+  border-radius: 12px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+  max-width: 400px;
+  width: 90%;
+}
+
+.record-dialog h3 {
+  margin: 0 0 12px 0;
+  font-size: 20px;
+  color: #fff;
+}
+
+.record-dialog p {
+  margin: 0 0 16px 0;
+  color: #b0b0b0;
+  font-size: 14px;
+}
+
+.record-dialog input {
+  width: 100%;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  color: #fff;
+  font-size: 14px;
+  font-family: 'Courier New', monospace;
+  transition: all 0.2s ease;
+}
+
+.record-dialog input:focus {
+  outline: none;
+  border-color: #2196f3;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.1);
+}
+
+.record-dialog input::placeholder {
+  color: #666;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.btn-cancel,
+.btn-confirm {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-cancel {
+  background: rgba(255, 255, 255, 0.1);
+  color: #e0e0e0;
+}
+
+.btn-cancel:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.btn-confirm {
+  background: linear-gradient(135deg, #2196f3 0%, #1976d2 100%);
+  color: white;
+}
+
+.btn-confirm:hover:not(:disabled) {
+  background: linear-gradient(135deg, #1976d2 0%, #1565c0 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(33, 150, 243, 0.4);
+}
+
+.btn-confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Reset Button */
+.reset-btn {
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.reset-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.reset-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .control-overlay {
+    top: auto;
+    bottom: 20px;
+    right: 20px;
+    left: 20px;
+    max-width: none;
+  }
+}

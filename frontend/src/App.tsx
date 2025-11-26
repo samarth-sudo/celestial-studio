@@ -5,6 +5,7 @@ import ConversationalChat from './components/ConversationalChat'
 import Simulator from './components/Simulator'
 import GenesisViewer from './components/GenesisViewer'
 import CameraViewTest from './pages/CameraViewTest'
+import TeleopTest from './pages/TeleopTest'
 import ToastNotification from './components/ToastNotification'
 import './App.css'
 
@@ -15,6 +16,7 @@ function App() {
   const [initialPrompt, setInitialPrompt] = useState('')
   const [sceneConfig, setSceneConfig] = useState<SceneConfig | null>(null)
   const [isTestMode, setIsTestMode] = useState(false)
+  const [testMode, setTestMode] = useState<string | null>(null)
 
   // Renderer selection: Genesis (default) or Three.js (fallback)
   const [renderer, setRenderer] = useState<RendererType>(() => {
@@ -28,8 +30,10 @@ function App() {
   // Check URL for test mode
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    if (params.get('test') === 'camera') {
+    const testParam = params.get('test')
+    if (testParam === 'camera' || testParam === 'teleop') {
       setIsTestMode(true)
+      setTestMode(testParam)
     }
 
     // Check for renderer override in URL
@@ -97,7 +101,11 @@ function App() {
 
   // Render test mode
   if (isTestMode) {
-    return <CameraViewTest />
+    if (testMode === 'camera') {
+      return <CameraViewTest />
+    } else if (testMode === 'teleop') {
+      return <TeleopTest />
+    }
   }
 
   if (showLanding) {

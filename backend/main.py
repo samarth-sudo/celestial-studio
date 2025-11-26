@@ -45,6 +45,12 @@ try:
 except ImportError:
     from backend.api.vision_analysis import router as vision_router
 
+# Import Genesis streaming router
+try:
+    from api.genesis_streaming import router as genesis_router
+except ImportError:
+    from backend.api.genesis_streaming import router as genesis_router
+
 # Import robot API router
 # Temporarily disabled for startup
 # try:
@@ -83,6 +89,12 @@ try:
 except ImportError:
     from backend.multi_robot.manager import get_multi_robot_manager, reset_multi_robot_manager
 
+# Import Genesis teleoperation server
+try:
+    from control.genesis_teleop_server import GenesisTeleopServer
+except ImportError:
+    from backend.control.genesis_teleop_server import GenesisTeleopServer
+
 app = FastAPI(title="Robotics Demo API")
 
 # Include conversational chat router
@@ -90,6 +102,9 @@ app.include_router(chat_router)
 
 # Include vision analysis router
 app.include_router(vision_router)
+
+# Include Genesis streaming router
+app.include_router(genesis_router)
 
 # Include multi-robot API router (temporarily disabled)
 # app.include_router(robot_router)
@@ -2445,6 +2460,129 @@ async def genesis_websocket(websocket: WebSocket):
 
     finally:
         sim.remove_websocket_client(websocket)
+
+
+# Global teleoperation server instance (initialized on demand)
+teleop_server: Optional[GenesisTeleopServer] = None
+
+
+def get_teleop_server():
+    """Get or create teleoperation server instance"""
+    global teleop_server
+    if teleop_server is None:
+        # Get Genesis service
+        if GENESIS_AVAILABLE:
+            sim = get_simulation()
+            teleop_server = GenesisTeleopServer(sim)
+        else:
+            raise HTTPException(status_code=503, detail="Genesis not available")
+    return teleop_server
+
+
+@app.websocket("/api/control/teleop")
+async def teleoperation_websocket(websocket: WebSocket):
+    """
+    WebSocket endpoint for keyboard teleoperation with recording
+
+    Receives keyboard state from browser and controls robots
+    Supports recording demonstrations to CSV for imitation learning
+
+    Message Types:
+    - keyboard_input: {robot_id, keys: {...}}
+    - start_recording: {task_name}
+    - stop_recording: {}
+    - reset_robot: {robot_id}
+    """
+    if not GENESIS_AVAILABLE:
+        await websocket.close(code=1003, reason="Genesis not available")
+        return
+
+    await websocket.accept()
+    teleop = get_teleop_server()
+
+    print("🎮 Teleoperation WebSocket client connected")
+
+    try:
+        while True:
+            try:
+                # Receive message from browser
+                data = await websocket.receive_json()
+                msg_type = data.get('type')
+
+                if msg_type == 'keyboard_input':
+                    # Process keyboard state
+                    robot_id = data.get('robot_id', 'robot-1')
+                    pressed_keys = data.get('keys', {})
+
+                    # Ensure robot is initialized
+                    if robot_id not in teleop.robot_states:
+                        # Initialize robot (infer type from Genesis service)
+                        robot_type = data.get('robot_type', 'mobile')
+                        teleop.initialize_robot(robot_id, robot_type)
+
+                    # Process keys and get result
+                    result = teleop.process_keyboard_input(robot_id, pressed_keys)
+
+                    # Send back action and state
+                    await websocket.send_json({
+                        'type': 'teleop_update',
+                        'robot_id': robot_id,
+                        'result': result
+                    })
+
+                elif msg_type == 'start_recording':
+                    # Start recording demonstration
+                    task_name = data.get('task_name', 'demo')
+                    result = teleop.start_recording(task_name)
+
+                    await websocket.send_json({
+                        'type': 'recording_started',
+                        'result': result
+                    })
+
+                elif msg_type == 'stop_recording':
+                    # Stop and save recording
+                    result = teleop.stop_recording()
+
+                    await websocket.send_json({
+                        'type': 'recording_stopped',
+                        'result': result
+                    })
+
+                elif msg_type == 'reset_robot':
+                    # Reset robot to initial state
+                    robot_id = data.get('robot_id', 'robot-1')
+                    result = teleop.reset_robot(robot_id)
+
+                    await websocket.send_json({
+                        'type': 'robot_reset',
+                        'result': result
+                    })
+
+                elif msg_type == 'get_recording_status':
+                    # Get current recording status
+                    status = teleop.get_recording_status()
+
+                    await websocket.send_json({
+                        'type': 'recording_status',
+                        'status': status
+                    })
+
+                elif msg_type == 'ping':
+                    # Heartbeat
+                    await websocket.send_json({'type': 'pong'})
+
+            except WebSocketDisconnect:
+                print("🎮 Teleoperation client disconnected")
+                break
+            except Exception as e:
+                print(f"⚠️  Teleoperation WebSocket error: {e}")
+                import traceback
+                traceback.print_exc()
+                break
+
+    finally:
+        print("🎮 Teleoperation session ended")
 
 
 if __name__ == "__main__":

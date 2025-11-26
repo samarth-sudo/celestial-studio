@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, Dict, List, Any
 import sys
 import os
@@ -15,6 +15,9 @@ from simulation.scene_generator import SceneGenerator
 from export.package_generator import PackageGenerator
 from optimization.comparator import AlgorithmComparator
 from utils.toon_service import get_toon_service
+
+# Import Genesis simulation service
+from genesis_service import get_simulation, GenesisConfig, RobotType
 
 router = APIRouter()
 
@@ -1222,3 +1225,206 @@ async def sync_scene(request: SyncSceneRequest):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to sync scene: {str(e)}")
+
+# ============================================================================
+# Robot Command Execution
+# ============================================================================
+
+from chat.command_parser import CommandParser, RobotCommand
+from chat.command_executor import CommandExecutor, ExecutionStatus
+
+
+class RobotCommandRequest(BaseModel):
+    """Request for robot command execution"""
+    userId: str
+    robotId: str = Field(default="robot-1")
+    robotType: str = Field(default="mobile", description="mobile, arm, or drone")
+    command: str  # Natural language command
+
+
+class RobotCommandResponse(BaseModel):
+    """Response from robot command execution"""
+    status: str  # "success", "error", "parsing_failed"
+    message: str
+    parsed_commands: Optional[List[Dict]] = None
+    execution_results: Optional[List[Dict]] = None
+    error: Optional[str] = None
+
+
+# Global command parsers (one per robot type)
+command_parsers = {
+    "mobile": CommandParser("mobile"),
+    "arm": CommandParser("arm"),
+    "drone": CommandParser("drone"),
+}
+
+# Global command executor (will be initialized with teleop server)
+global_command_executor: Optional[CommandExecutor] = None
+
+
+def get_command_executor():
+    """Get or create command executor"""
+    global global_command_executor
+    
+    if global_command_executor is None:
+        # Import here to avoid circular dependency
+        try:
+            from main import get_teleop_server
+            teleop = get_teleop_server()
+            global_command_executor = CommandExecutor(teleop)
+            print("✅ Initialized command executor with teleoperation server")
+        except Exception as e:
+            print(f"⚠️ Failed to initialize command executor: {e}")
+            global_command_executor = CommandExecutor()  # No teleop server
+    
+    return global_command_executor
+
+
+@router.post("/api/robot/command", response_model=RobotCommandResponse)
+async def execute_robot_command(request: RobotCommandRequest):
+    """
+    Execute natural language robot commands
+    
+    Examples:
+    - "move forward 2 meters"
+    - "rotate 90 degrees clockwise"
+    - "grab the red cube"
+    - "move forward 1 meter then rotate 90 degrees"
+    """
+    try:
+        # Get command parser for robot type
+        parser = command_parsers.get(request.robotType)
+        if not parser:
+            return RobotCommandResponse(
+                status="error",
+                message=f"Unsupported robot type: {request.robotType}",
+                error=f"Robot type must be one of: {list(command_parsers.keys())}"
+            )
+        
+        # Parse command(s)
+        print(f"🤖 Parsing command: '{request.command}' for {request.robotType} robot")
+        
+        # Try single command first
+        parsed_command = parser.parse(request.command)
+        
+        if parsed_command:
+            commands = [parsed_command]
+        else:
+            # Try sequence parsing
+            commands = parser.parse_sequence(request.command)
+        
+        if not commands:
+            return RobotCommandResponse(
+                status="parsing_failed",
+                message=f"Could not parse command: '{request.command}'",
+                error="Command not recognized. Try commands like 'move forward 2 meters' or 'rotate 90 degrees'"
+            )
+        
+        print(f"✅ Parsed {len(commands)} command(s)")
+        
+        # Get command executor
+        executor = get_command_executor()
+        
+        # Execute commands
+        execution_results = []
+        
+        for cmd in commands:
+            print(f"▶️ Executing: {cmd.command_type.value}")
+            
+            # Execute asynchronously
+            execution = await executor.execute(cmd, request.robotId)
+            
+            execution_results.append(execution.to_dict())
+            
+            print(f"{'✅' if execution.status == ExecutionStatus.COMPLETED else '❌'} "
+                  f"{cmd.command_type.value}: {execution.status.value} ({execution.duration:.2f}s)")
+            
+            # Stop on first failure
+            if execution.status == ExecutionStatus.FAILED:
+                break
+        
+        # Determine overall status
+        all_completed = all(r['status'] == ExecutionStatus.COMPLETED.value for r in execution_results)
+        overall_status = "success" if all_completed else "error"
+        
+        # Generate response message
+        if all_completed:
+            message = f"Successfully executed {len(commands)} command(s)"
+        else:
+            failed_count = sum(1 for r in execution_results if r['status'] == ExecutionStatus.FAILED.value)
+            message = f"Executed {len(execution_results)} command(s), {failed_count} failed"
+        
+        return RobotCommandResponse(
+            status=overall_status,
+            message=message,
+            parsed_commands=[cmd.model_dump() for cmd in commands],
+            execution_results=execution_results
+        )
+    
+    except Exception as e:
+        print(f"❌ Error executing robot command: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        return RobotCommandResponse(
+            status="error",
+            message="Internal server error",
+            error=str(e)
+        )
+
+
+@router.get("/api/robot/command-status")
+async def get_command_status():
+    """Get current command execution status"""
+    try:
+        executor = get_command_executor()
+        status = executor.get_status()
+        
+        return {
+            "status": "success",
+            **status
+        }
+    
+    except Exception as e:
+        print(f"❌ Error getting command status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/robot/parse-command")
+async def parse_command(request: RobotCommandRequest):
+    """
+    Parse a command without executing it (for testing/preview)
+    """
+    try:
+        parser = command_parsers.get(request.robotType)
+        if not parser:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported robot type: {request.robotType}"
+            )
+        
+        # Try parsing
+        parsed_command = parser.parse(request.command)
+        
+        if parsed_command:
+            commands = [parsed_command]
+        else:
+            commands = parser.parse_sequence(request.command)
+        
+        if not commands:
+            return {
+                "status": "parsing_failed",
+                "message": "Could not parse command",
+                "commands": []
+            }
+        
+        return {
+            "status": "success",
+            "message": f"Parsed {len(commands)} command(s)",
+            "commands": [cmd.model_dump() for cmd in commands],
+            "actions": [parser.to_action(cmd) for cmd in commands]
+        }
+    
+    except Exception as e:
+        print(f"❌ Error parsing command: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

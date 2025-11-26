@@ -149,27 +149,45 @@ const GenesisViewer: React.FC<GenesisViewerProps> = ({
   // WebSocket connection
   const connectWebSocket = () => {
     const wsUrl = backendUrl.replace('http://', 'ws://').replace('https://', 'wss://');
-    const ws = new WebSocket(`${wsUrl}/api/genesis/ws`);
+    // UPDATED: Use new Genesis video streaming endpoint
+    const ws = new WebSocket(`${wsUrl}/ws/genesis/video`);
 
     ws.onopen = () => {
-      console.log('🔌 WebSocket connected');
+      console.log('🔌 Genesis video stream connected');
       setConnected(true);
       if (onConnectionChange) {
         onConnectionChange(true);
       }
+
+      // Request camera list
+      ws.send(JSON.stringify({ type: 'get_cameras' }));
     };
 
     ws.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
 
-        if (message.type === 'state_update') {
+        if (message.type === 'frame') {
+          // Render frame (frames are pushed automatically, no request needed)
+          renderFrame(message.image);
+
+          // Update simulation state from frame metadata
+          if (message.state) {
+            setSimState({
+              timestamp: message.timestamp,
+              step: message.state.step,
+              fps: message.state.fps,
+              robots: message.state.robots,
+              obstacles: {}
+            });
+          }
+        } else if (message.type === 'cameras_list') {
+          // Camera list received
+          console.log('📷 Available cameras:', message.cameras);
+        } else if (message.type === 'state_update') {
           setSimState(message.data);
         } else if (message.type === 'initial_state') {
           setSimState(message.data);
-        } else if (message.type === 'frame') {
-          // Render frame
-          renderFrame(message.data);
         }
       } catch (error) {
         console.error('WebSocket message error:', error);
@@ -233,23 +251,7 @@ const GenesisViewer: React.FC<GenesisViewerProps> = ({
     img.src = `data:image/jpeg;base64,${base64Data}`;
   };
 
-  // Request frame updates
-  useEffect(() => {
-    if (!connected || !wsRef.current) return;
-
-    const requestFrame = () => {
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: 'get_frame' }));
-      }
-    };
-
-    // Request frames at 30 FPS
-    const intervalId = setInterval(requestFrame, 1000 / 30);
-
-    return () => {
-      clearInterval(intervalId);
-    };
-  }, [connected]);
+  // NOTE: Frame requests removed - new streaming endpoint pushes frames automatically at 30 FPS
 
   // Fetch stream stats periodically
   useEffect(() => {
