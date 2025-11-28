@@ -129,7 +129,7 @@ function App() {
           {!genesisAvailable && ' (Genesis unavailable)'}
         </button>
         <span className="renderer-badge">
-          {renderer === 'genesis' ? '43M FPS GPU Physics' : 'Browser Rendering'}
+          {renderer === 'genesis' ? 'Python + GPU Physics' : 'Browser Rendering'}
         </span>
       </div>
 

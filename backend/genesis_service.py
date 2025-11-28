@@ -223,29 +223,12 @@ class GenesisSimulation:
 
         logger.info(f"📷 Created {len(self.cameras)} cameras")
 
-    def initialize(self):
-        """Initialize Genesis engine"""
+    def _create_scene(self):
+        """Create Genesis scene (separated for reusability)"""
         if not GENESIS_AVAILABLE:
-            raise RuntimeError("Genesis not installed. Install with: pip install genesis-world")
+            raise RuntimeError("Genesis not available")
 
-        logger.info(f"Initializing Genesis with {self.config.backend.value} backend...")
-
-        # Map backend enum to Genesis backend
-        backend_map = {
-            BackendType.METAL: gs.metal,
-            BackendType.CUDA: gs.cuda,
-            BackendType.CPU: gs.cpu,
-            BackendType.VULKAN: gs.vulkan,
-        }
-
-        backend = backend_map.get(self.config.backend, gs.cpu)
-
-        # Initialize Genesis
-        gs.init(
-            backend=backend,
-            precision=self.config.precision,
-            logging_level=self.config.logging_level,
-        )
+        logger.info("Creating Genesis scene...")
 
         # Create scene with viewer options
         self.scene = gs.Scene(
@@ -274,6 +257,46 @@ class GenesisSimulation:
 
         # Create cameras for rendering (CRITICAL: cameras must be created for frame capture)
         self._create_cameras()
+
+        logger.info("✅ Scene created successfully")
+
+    def initialize(self):
+        """Initialize Genesis engine"""
+        if not GENESIS_AVAILABLE:
+            raise RuntimeError("Genesis not installed. Install with: pip install genesis-world")
+
+        # Check if Genesis is ALREADY initialized globally
+        # Genesis maintains a global _initialized flag that prevents multiple gs.init() calls
+        if hasattr(gs, '_initialized') and gs._initialized:
+            logger.warning("⚠️ Genesis already initialized globally, skipping gs.init()")
+            self.is_initialized = True
+
+            # Still create scene if needed
+            if self.scene is None:
+                self._create_scene()
+            return
+
+        logger.info(f"Initializing Genesis with {self.config.backend.value} backend...")
+
+        # Map backend enum to Genesis backend
+        backend_map = {
+            BackendType.METAL: gs.metal,
+            BackendType.CUDA: gs.cuda,
+            BackendType.CPU: gs.cpu,
+            BackendType.VULKAN: gs.vulkan,
+        }
+
+        backend = backend_map.get(self.config.backend, gs.cpu)
+
+        # Initialize Genesis (ONLY if not already initialized)
+        gs.init(
+            backend=backend,
+            precision=self.config.precision,
+            logging_level=self.config.logging_level,
+        )
+
+        # Create scene
+        self._create_scene()
 
         self.is_initialized = True
         logger.info("✅ Genesis initialized successfully")
@@ -913,26 +936,96 @@ class GenesisSimulation:
             self.websocket_clients.remove(websocket)
             logger.info(f"WebSocket client disconnected ({len(self.websocket_clients)} remaining)")
 
-    def reset(self):
-        """Reset simulation to initial state"""
-        self.step_count = 0
-        self.start_time = time.time()
-        # TODO: Reset scene state
-        logger.info("🔄 Simulation reset")
+    def reset_scene(self):
+        """
+        Reset scene for a new simulation
+        This clears all robots and obstacles, and resets the scene state
+        WITHOUT destroying the Genesis engine (avoids "already initialized" error)
+        """
+        logger.info("🔄 Resetting scene for new simulation...")
 
-    def destroy(self):
-        """Clean up resources"""
-        self.stop()
+        # Stop simulation if running
+        was_running = self.is_running
+        if was_running:
+            self.stop()
+
+        # Clear robot and obstacle dictionaries
         self.robots.clear()
         self.obstacles.clear()
         self.algorithms.clear()
+
+        # Reset counters
+        self.step_count = 0
+        self.start_time = time.time()
+
+        # If scene exists, reset it using Genesis's reset API
+        if self.scene is not None:
+            try:
+                # Genesis scenes have a reset() method that resets state without destroying
+                if hasattr(self.scene, 'reset'):
+                    self.scene.reset()
+                    logger.info("✅ Scene reset using Genesis API")
+                else:
+                    # Fallback: destroy and recreate scene
+                    logger.info("Scene reset not available, recreating scene...")
+                    self.scene = None
+                    self._create_scene()
+            except Exception as e:
+                logger.warning(f"Scene reset failed: {e}, recreating scene...")
+                self.scene = None
+                self._create_scene()
+        else:
+            # No scene exists, create new one
+            self._create_scene()
+
+        logger.info("✅ Scene reset complete, ready for new simulation")
+
+        # Restart if was running
+        if was_running:
+            self.start()
+
+    def reset(self):
+        """Reset simulation to initial state (deprecated, use reset_scene instead)"""
+        self.step_count = 0
+        self.start_time = time.time()
+        logger.info("🔄 Simulation reset")
+
+    def destroy(self):
+        """
+        Clean up all resources and destroy Genesis scene
+        Note: This does NOT destroy the Genesis engine itself (gs.destroy())
+        """
+        logger.info("🗑️ Destroying simulation...")
+
+        # Stop simulation
+        self.stop()
+
+        # Clear all data structures
+        self.robots.clear()
+        self.obstacles.clear()
+        self.algorithms.clear()
+        self.cameras.clear()
         self.websocket_clients.clear()
 
+        # Destroy scene if it exists
         if self.scene is not None:
-            # TODO: Properly destroy Genesis scene
-            self.scene = None
+            try:
+                # Delete scene object (Genesis handles cleanup internally)
+                del self.scene
+                self.scene = None
+                logger.info("✅ Scene destroyed")
+            except Exception as e:
+                logger.warning(f"Scene destruction warning: {e}")
+                self.scene = None
 
-        logger.info("🗑️  Simulation destroyed")
+        # Reset frame capture
+        self.last_frame = None
+        self.last_frame_time = 0.0
+
+        # Reset initialization flag (allows re-initialization of scene, not Genesis engine)
+        self.is_initialized = False
+
+        logger.info("✅ Simulation destroyed successfully")
 
 
 # Global simulation manager (singleton)
