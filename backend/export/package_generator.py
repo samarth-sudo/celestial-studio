@@ -17,22 +17,24 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 from pathlib import Path
 
-from .react_exporter import ReactExporter
+# REMOVED: React and Isaac Lab exporters - using Genesis instead
+# from .react_exporter import ReactExporter
+# from .isaac_lab_exporter import IsaacLabExporter
 from .ros_exporter import ROSExporter
 from .python_exporter import PythonExporter
-from .isaac_lab_exporter import IsaacLabExporter
 
 
 class PackageGenerator:
     """Main package generation engine"""
 
-    SUPPORTED_FORMATS = ['react', 'ros', 'python', 'algorithms', 'isaac_lab']
+    SUPPORTED_FORMATS = ['ros', 'python', 'algorithms']  # Removed 'react', 'isaac_lab'
 
     def __init__(self):
-        self.react_exporter = ReactExporter()
+        # REMOVED: React and Isaac Lab exporters
+        # self.react_exporter = ReactExporter()
+        # self.isaac_lab_exporter = IsaacLabExporter()
         self.ros_exporter = ROSExporter()
         self.python_exporter = PythonExporter()
-        self.isaac_lab_exporter = IsaacLabExporter()
         self.temp_dir = tempfile.mkdtemp(prefix='celestial_export_')
 
     def generate_package(
@@ -66,11 +68,13 @@ class PackageGenerator:
         os.makedirs(project_dir, exist_ok=True)
 
         # Generate files based on format
-        if export_format == 'react':
-            files = self.react_exporter.export(algorithms, scene_config, robots, project_name)
-            # Write files to disk
-            self._write_files(project_dir, files)
-        elif export_format == 'ros':
+        # REMOVED: React and Isaac Lab export options
+        # if export_format == 'react':
+        #     files = self.react_exporter.export(algorithms, scene_config, robots, project_name)
+        #     self._write_files(project_dir, files)
+        # elif export_format == 'isaac_lab':
+        #     self.isaac_lab_exporter.export(project_dir, scene_config, algorithms, robots, project_name)
+        if export_format == 'ros':
             files = self.ros_exporter.export(algorithms, scene_config, robots, project_name)
             # Write files to disk
             self._write_files(project_dir, files)
@@ -82,9 +86,8 @@ class PackageGenerator:
             files = self._export_algorithms_only(algorithms)
             # Write files to disk
             self._write_files(project_dir, files)
-        elif export_format == 'isaac_lab':
-            # Isaac Lab exporter writes directly to disk
-            self.isaac_lab_exporter.export(project_dir, scene_config, algorithms, robots, project_name)
+        else:
+            raise ValueError(f"Unsupported export format: {export_format}. Supported: {self.SUPPORTED_FORMATS}")
 
         # Create ZIP package
         zip_path = self._create_zip(project_dir, project_name)

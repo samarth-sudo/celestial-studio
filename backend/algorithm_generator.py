@@ -19,6 +19,12 @@ try:
 except ImportError:
     from backend.code_validator import validate_code, ValidationResult
 
+# Import Genesis documentation RAG system
+try:
+    from genesis_context.doc_retriever import get_retriever
+except ImportError:
+    from backend.genesis_context.doc_retriever import get_retriever
+
 
 @dataclass
 class AlgorithmRequest:
@@ -65,13 +71,20 @@ REQUIRED_FUNCTIONS = {
 
 
 class AlgorithmGenerator:
-    """Generates algorithm code using Qwen 2.5 Coder"""
+    """Generates algorithm code using Qwen 2.5 Coder with Genesis RAG"""
 
     OLLAMA_URL = "http://localhost:11434/api/generate"
     OLLAMA_MODEL = "qwen2.5-coder-robotics"
 
     def __init__(self):
         self.templates = self._load_templates()
+        # Initialize Genesis documentation retriever
+        try:
+            self.doc_retriever = get_retriever()
+            print("✅ Genesis documentation RAG system initialized")
+        except Exception as e:
+            print(f"⚠️ Failed to initialize Genesis docs: {e}")
+            self.doc_retriever = None
 
     def generate(self, request: AlgorithmRequest) -> AlgorithmResponse:
         """Generate algorithm code from natural language description"""
@@ -126,10 +139,22 @@ class AlgorithmGenerator:
             raise
 
     def _build_prompt(self, request: AlgorithmRequest, required_func: Dict) -> str:
-        """Build Qwen prompt with strict interface requirements for Python/Genesis"""
+        """Build Qwen prompt with Genesis documentation and strict interface requirements"""
 
         robot_context = self._get_robot_context(request.robot_type)
         template = self.templates.get(request.algorithm_type, "")
+
+        # Get Genesis documentation context via RAG
+        genesis_context = ""
+        if self.doc_retriever:
+            try:
+                full_context = self.doc_retriever.get_full_context(
+                    f"{request.robot_type} {request.algorithm_type} {request.description}"
+                )
+                genesis_context = full_context
+                print(f"📚 Retrieved Genesis documentation context ({len(genesis_context)} chars)")
+            except Exception as e:
+                print(f"⚠️ Failed to retrieve docs: {e}")
 
         prompt = f"""You are an expert robotics algorithm engineer. Generate a Python algorithm for {request.algorithm_type} that will run in the Genesis physics engine.
 
@@ -137,6 +162,9 @@ Robot Type: {request.robot_type}
 {robot_context}
 
 Task: {request.description}
+
+GENESIS DOCUMENTATION CONTEXT:
+{genesis_context}
 
 CRITICAL REQUIREMENTS:
 1. You MUST implement a function named: {required_func['name']}
@@ -148,6 +176,7 @@ CRITICAL REQUIREMENTS:
 7. Optimize for real-time performance in Genesis simulation loop
 8. Use numpy for all vector/matrix operations
 9. The function will be called every simulation step
+10. Follow Genesis API patterns shown in documentation above
 
 REQUIRED FUNCTION:
 def {required_func['name']}{required_func['signature']}:
@@ -166,13 +195,11 @@ def {required_func['name']}{required_func['signature']}:
 REQUIRED IMPORTS:
 import numpy as np
 from typing import List, Dict, Tuple, Optional
+import genesis as gs  # If using Genesis APIs directly
 
 CONFIGURABLE PARAMETERS (at module level):
 # Example: SPEED_LIMIT = 2.0  # Maximum speed in m/s
 # These will be exposed to the UI for real-time tuning
-
-Template Structure:
-{template}
 
 Algorithm Guidelines:
 - For path planning: Use A*, RRT, Dijkstra, or PRM based on the task
@@ -181,10 +208,11 @@ Algorithm Guidelines:
 - For computer vision: Choose appropriate CV algorithm for the task
 
 Genesis Integration Notes:
+- Use Genesis APIs as shown in documentation context above
 - Robot state includes: position (3D), orientation (quaternion), velocity, joint angles
-- Obstacles are dictionaries with 'position' and 'size' keys
+- Obstacles are dictionaries with 'position' and 'radius' keys
 - Return values should be numpy arrays for compatibility with Genesis
-- Avoid heavy computations; aim for <1ms execution time
+- Avoid heavy computations; aim for <1ms execution time per call
 
 Output ONLY the complete Python code. No explanations, no markdown formatting.
 The code MUST include the function named '{required_func['name']}'."""

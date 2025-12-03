@@ -102,6 +102,22 @@ JSON:"""
                 if value is not None and value != [] and value != "":
                     self.requirements[key] = value
 
+            # Apply smart defaults based on robot type (if environment not specified)
+            if 'robot_type' in self.requirements and 'environment' not in self.requirements:
+                robot_type = self.requirements['robot_type']
+                if robot_type == 'arm':
+                    self.requirements['environment'] = 'tabletop'
+                    print(f"✨ Auto-set environment to 'tabletop' for arm robot")
+                elif robot_type == 'mobile':
+                    self.requirements['environment'] = 'warehouse'
+                    print(f"✨ Auto-set environment to 'warehouse' for mobile robot")
+                elif robot_type == 'drone':
+                    self.requirements['environment'] = 'open_space'
+                    print(f"✨ Auto-set environment to 'open_space' for drone")
+                elif robot_type == 'humanoid':
+                    self.requirements['environment'] = 'indoor'
+                    print(f"✨ Auto-set environment to 'indoor' for humanoid")
+
         except Exception as e:
             print(f"Error extracting requirements: {e}")
             # Fallback: simple keyword detection
@@ -178,6 +194,18 @@ JSON:"""
             objects.append('shelves')
         if objects:
             reqs['objects'] = objects
+
+        # Apply smart defaults based on robot type (if environment not specified)
+        if 'robot_type' in reqs and 'environment' not in reqs:
+            robot_type = reqs['robot_type']
+            if robot_type == 'arm':
+                reqs['environment'] = 'tabletop'
+            elif robot_type == 'mobile':
+                reqs['environment'] = 'warehouse'
+            elif robot_type == 'drone':
+                reqs['environment'] = 'open_space'
+            elif robot_type == 'humanoid':
+                reqs['environment'] = 'indoor'
 
         return reqs
 

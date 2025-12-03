@@ -1,13 +1,13 @@
 """
-Algorithm Templates for Celestial Studio
+Algorithm Templates for Celestial Studio - Python/Genesis Version
 
-Research-grade algorithm templates based on 2024 robotics papers.
-These templates guide Qwen when generating algorithm code.
+Research-grade algorithm templates for Genesis physics engine.
+All templates use Python and Genesis APIs.
 
 References:
 - A* + DWA: "Robot obstacle avoidance optimization by A* and DWA fusion algorithm" (PLOS One, April 2024)
 - FABRIK IK: "A Combined Inverse Kinematics Algorithm Using FABRIK with Optimization"
-- YOLO11: "Combining YOLO11 and Depth Pro for Accurate Distance Estimation"
+- Genesis Documentation: https://github.com/Genesis-Embodied-AI/genesis-doc
 """
 
 from typing import Dict, List
@@ -29,1557 +29,556 @@ class AlgorithmTemplates:
 
     @staticmethod
     def path_planning_templates() -> Dict[str, str]:
-        """Path planning algorithm templates"""
+        """Path planning algorithm templates (Python/Genesis)"""
         return {
             "astar": """
-// A* Path Planning Algorithm
-// Based on: "Robot obstacle avoidance optimization by A* and DWA fusion algorithm" (PLOS One, 2024)
-//
-// Finds optimal path from start to goal using grid-based search
-// Time Complexity: O(b^d) where b=branching factor, d=depth
-// Space Complexity: O(b^d)
-
-import * as THREE from 'three'
-
-// Configuration parameters
-const GRID_SIZE = 0.5  // meters per grid cell
-const HEURISTIC_WEIGHT = 1.0  // A* heuristic weight (1.0 = optimal, >1.0 = faster but suboptimal)
-
-interface GridCell {
-  x: number
-  z: number
-  walkable: boolean
-  g: number  // Cost from start
-  h: number  // Heuristic to goal
-  f: number  // Total cost (g + h)
-  parent: GridCell | null
-}
-
-interface PathPlanningResult {
-  path: THREE.Vector3[]
-  pathLength: number
-  nodesExplored: number
-}
-
-function findPath(
-  start: THREE.Vector3,
-  goal: THREE.Vector3,
-  obstacles: Array<{position: THREE.Vector3, radius: number}>,
-  worldBounds: {min: THREE.Vector3, max: THREE.Vector3}
-): PathPlanningResult {
-  // 1. Create grid
-  const grid = createGrid(worldBounds, obstacles)
-
-  // 2. Initialize start and goal cells
-  const startCell = worldToGrid(start, worldBounds)
-  const goalCell = worldToGrid(goal, worldBounds)
-
-  // 3. A* search
-  const openSet: GridCell[] = [startCell]
-  const closedSet = new Set<GridCell>()
-  let nodesExplored = 0
-
-  startCell.g = 0
-  startCell.h = heuristic(startCell, goalCell)
-  startCell.f = startCell.h
-
-  while (openSet.length > 0) {
-    // Get node with lowest f score
-    openSet.sort((a, b) => a.f - b.f)
-    const current = openSet.shift()!
-    nodesExplored++
-
-    // Goal reached
-    if (current.x === goalCell.x && current.z === goalCell.z) {
-      const path = reconstructPath(current, worldBounds)
-      return {
-        path,
-        pathLength: calculatePathLength(path),
-        nodesExplored
-      }
-    }
-
-    closedSet.add(current)
-
-    // Check neighbors (8-connected grid for smooth paths)
-    const neighbors = getNeighbors(current, grid)
-
-    for (const neighbor of neighbors) {
-      if (!neighbor.walkable || closedSet.has(neighbor)) continue
-
-      const tentativeG = current.g + distance(current, neighbor)
-
-      if (tentativeG < neighbor.g) {
-        neighbor.parent = current
-        neighbor.g = tentativeG
-        neighbor.h = heuristic(neighbor, goalCell) * HEURISTIC_WEIGHT
-        neighbor.f = neighbor.g + neighbor.h
-
-        if (!openSet.includes(neighbor)) {
-          openSet.push(neighbor)
-        }
-      }
-    }
-  }
-
-  // No path found
-  return { path: [], pathLength: 0, nodesExplored }
-}
-
-function heuristic(a: GridCell, b: GridCell): number {
-  // Euclidean distance (admissible heuristic)
-  const dx = a.x - b.x
-  const dz = a.z - b.z
-  return Math.sqrt(dx * dx + dz * dz)
-}
-
-function distance(a: GridCell, b: GridCell): number {
-  // Actual movement cost
-  const dx = Math.abs(a.x - b.x)
-  const dz = Math.abs(a.z - b.z)
-  // Diagonal movement costs sqrt(2), orthogonal costs 1
-  return (dx && dz) ? Math.SQRT2 : 1
-}
-
-export { findPath, type PathPlanningResult }
-""",
-            "rrt": """
-// RRT (Rapidly-exploring Random Tree) Path Planning
-// Good for high-dimensional spaces and complex environments
-// Time Complexity: Probabilistically complete
-// Space Complexity: O(n) where n = number of samples
-
-import * as THREE from 'three'
-
-const MAX_ITERATIONS = 1000
-const STEP_SIZE = 0.5  // meters
-const GOAL_THRESHOLD = 0.3  // meters
-
-interface RRTNode {
-  position: THREE.Vector3
-  parent: RRTNode | null
-}
-
-function findPathRRT(
-  start: THREE.Vector3,
-  goal: THREE.Vector3,
-  obstacles: Array<{position: THREE.Vector3, radius: number}>,
-  worldBounds: {min: THREE.Vector3, max: THREE.Vector3}
-): THREE.Vector3[] {
-  const tree: RRTNode[] = [{ position: start.clone(), parent: null }]
-
-  for (let i = 0; i < MAX_ITERATIONS; i++) {
-    // Sample random point (bias towards goal 10% of the time)
-    const randomPoint = Math.random() < 0.1 ? goal.clone() : sampleRandomPoint(worldBounds)
-
-    // Find nearest node in tree
-    const nearest = findNearest(tree, randomPoint)
-
-    // Extend towards random point
-    const newPoint = extend(nearest.position, randomPoint, STEP_SIZE)
-
-    // Check collision
-    if (!isColliding(nearest.position, newPoint, obstacles)) {
-      const newNode: RRTNode = { position: newPoint, parent: nearest }
-      tree.push(newNode)
-
-      // Check if reached goal
-      if (newPoint.distanceTo(goal) < GOAL_THRESHOLD) {
-        return reconstructPath(newNode)
-      }
-    }
-  }
-
-  return []  // Failed to find path
-}
-
-export { findPathRRT }
-""",
-            "longest_path": """
-// Longest Path Planning Algorithm
-// Maximizes path length while avoiding cycles and still reaching the goal
-// Use case: Scenic routes, surveillance coverage, exploration
-// Time Complexity: O(V * E) where V=vertices, E=edges
-
-import * as THREE from 'three'
-
-interface PathPoint {
-  x: number
-  z: number
-}
-
-const GRID_RESOLUTION = 0.5  // meters
-const EXPLORATION_FACTOR = 2.5  // Higher = more exploration
-const SAFETY_MARGIN = 0.3  // meters around obstacles
-
-function findLongestPath(
-  start: PathPoint,
-  goal: PathPoint,
-  obstacles: Array<{ position: PathPoint, radius: number }>
-): PathPoint[] {
-  // Create grid-based graph
-  const bounds = calculateBounds(start, goal, obstacles)
-  const grid = createGrid(bounds, GRID_RESOLUTION)
-
-  // Mark obstacle cells
-  markObstacles(grid, obstacles, SAFETY_MARGIN)
-
-  // Find longest path using inverted heuristic
-  const path = longestPathSearch(grid, start, goal)
-
-  // Add scenic waypoints between path segments
-  const scenicPath = addScenicWaypoints(path, obstacles)
-
-  return scenicPath
-}
-
-function calculateBounds(
-  start: PathPoint,
-  goal: PathPoint,
-  obstacles: Array<{ position: PathPoint, radius: number }>
-): { minX: number, maxX: number, minZ: number, maxZ: number } {
-  let minX = Math.min(start.x, goal.x)
-  let maxX = Math.max(start.x, goal.x)
-  let minZ = Math.min(start.z, goal.z)
-  let maxZ = Math.max(start.z, goal.z)
-
-  // Expand bounds to include obstacles
-  obstacles.forEach(obs => {
-    minX = Math.min(minX, obs.position.x - obs.radius - 5)
-    maxX = Math.max(maxX, obs.position.x + obs.radius + 5)
-    minZ = Math.min(minZ, obs.position.z - obs.radius - 5)
-    maxZ = Math.max(maxZ, obs.position.z + obs.radius + 5)
-  })
-
-  return { minX, maxX, minZ, maxZ }
-}
-
-function createGrid(bounds: any, resolution: number): Map<string, boolean> {
-  const grid = new Map<string, boolean>()
-
-  for (let x = bounds.minX; x <= bounds.maxX; x += resolution) {
-    for (let z = bounds.minZ; z <= bounds.maxZ; z += resolution) {
-      const key = `${Math.round(x / resolution)},${Math.round(z / resolution)}`
-      grid.set(key, true)  // true = walkable
-    }
-  }
-
-  return grid
-}
-
-function markObstacles(
-  grid: Map<string, boolean>,
-  obstacles: Array<{ position: PathPoint, radius: number }>,
-  safetyMargin: number
-): void {
-  grid.forEach((walkable, key) => {
-    const [x, z] = key.split(',').map(Number)
-    const worldX = x * GRID_RESOLUTION
-    const worldZ = z * GRID_RESOLUTION
-
-    for (const obs of obstacles) {
-      const dist = Math.sqrt(
-        Math.pow(worldX - obs.position.x, 2) +
-        Math.pow(worldZ - obs.position.z, 2)
-      )
-
-      if (dist < obs.radius + safetyMargin) {
-        grid.set(key, false)  // not walkable
-        break
-      }
-    }
-  })
-}
-
-function longestPathSearch(
-  grid: Map<string, boolean>,
-  start: PathPoint,
-  goal: PathPoint
-): PathPoint[] {
-  const startKey = toGridKey(start)
-  const goalKey = toGridKey(goal)
-
-  // Use modified A* with inverted heuristic (prefer farther nodes)
-  const openSet = new Set<string>([startKey])
-  const cameFrom = new Map<string, string>()
-  const gScore = new Map<string, number>()
-  const fScore = new Map<string, number>()
-
-  gScore.set(startKey, 0)
-  fScore.set(startKey, -invertedHeuristic(start, goal))  // Negative to maximize
-
-  const visited = new Set<string>()
-
-  while (openSet.size > 0) {
-    // Find node with highest fScore (longest distance)
-    let current = ''
-    let maxScore = -Infinity
-
-    openSet.forEach(node => {
-      const score = fScore.get(node) || -Infinity
-      if (score > maxScore) {
-        maxScore = score
-        current = node
-      }
-    })
-
-    if (current === goalKey) {
-      return reconstructPath(cameFrom, current)
-    }
-
-    openSet.delete(current)
-    visited.add(current)
-
-    // Get neighbors
-    const neighbors = getNeighbors(current, grid)
-
-    for (const neighbor of neighbors) {
-      if (visited.has(neighbor)) continue
-
-      const tentativeGScore = (gScore.get(current) || 0) + 1
-
-      if (!gScore.has(neighbor) || tentativeGScore < gScore.get(neighbor)!) {
-        cameFrom.set(neighbor, current)
-        gScore.set(neighbor, tentativeGScore)
-
-        const neighborPoint = fromGridKey(neighbor)
-        const h = -invertedHeuristic(neighborPoint, goal) * EXPLORATION_FACTOR
-        fScore.set(neighbor, tentativeGScore + h)
-
-        if (!openSet.has(neighbor)) {
-          openSet.add(neighbor)
-        }
-      }
-    }
-  }
-
-  // Fallback: direct path if no scenic path found
-  return [start, goal]
-}
-
-function invertedHeuristic(from: PathPoint, to: PathPoint): number {
-  // Prefer points FARTHER from goal (inverted heuristic)
-  const dist = Math.sqrt(
-    Math.pow(to.x - from.x, 2) +
-    Math.pow(to.z - from.z, 2)
-  )
-  return -dist  // Negative distance to maximize
-}
-
-function getNeighbors(key: string, grid: Map<string, boolean>): string[] {
-  const [x, z] = key.split(',').map(Number)
-  const neighbors: string[] = []
-
-  // 8-directional movement
-  const directions = [
-    [-1, 0], [1, 0], [0, -1], [0, 1],  // Cardinal
-    [-1, -1], [-1, 1], [1, -1], [1, 1]  // Diagonal
-  ]
-
-  for (const [dx, dz] of directions) {
-    const neighborKey = `${x + dx},${z + dz}`
-    if (grid.get(neighborKey) === true) {
-      neighbors.push(neighborKey)
-    }
-  }
-
-  return neighbors
-}
-
-function reconstructPath(cameFrom: Map<string, string>, current: string): PathPoint[] {
-  const path = [fromGridKey(current)]
-
-  while (cameFrom.has(current)) {
-    current = cameFrom.get(current)!
-    path.unshift(fromGridKey(current))
-  }
-
-  return path
-}
-
-function addScenicWaypoints(
-  path: PathPoint[],
-  obstacles: Array<{ position: PathPoint, radius: number }>
-): PathPoint[] {
-  if (path.length < 2) return path
-
-  const scenicPath: PathPoint[] = [path[0]]
-
-  for (let i = 1; i < path.length; i++) {
-    const prev = path[i - 1]
-    const curr = path[i]
-
-    // Add intermediate waypoint perpendicular to direct line
-    const dist = Math.sqrt(
-      Math.pow(curr.x - prev.x, 2) +
-      Math.pow(curr.z - prev.z, 2)
-    )
-
-    if (dist > 2.0) {  // Only for long segments
-      const mid = {
-        x: (prev.x + curr.x) / 2,
-        z: (prev.z + curr.z) / 2
-      }
-
-      // Offset perpendicular to direct line
-      const dx = curr.x - prev.x
-      const dz = curr.z - prev.z
-      const perpX = -dz / dist
-      const perpZ = dx / dist
-
-      const offset = 1.5  // meters
-      const scenic = {
-        x: mid.x + perpX * offset,
-        z: mid.z + perpZ * offset
-      }
-
-      // Check if scenic waypoint is safe
-      const isSafe = obstacles.every(obs => {
-        const d = Math.sqrt(
-          Math.pow(scenic.x - obs.position.x, 2) +
-          Math.pow(scenic.z - obs.position.z, 2)
+# A* Path Planning Algorithm (Python/Genesis)
+# Based on: "Robot obstacle avoidance optimization by A* and DWA fusion algorithm" (PLOS One, 2024)
+#
+# Finds optimal path from start to goal using grid-based search
+# Time Complexity: O(b^d) where b=branching factor, d=depth
+# Space Complexity: O(b^d)
+
+import numpy as np
+from typing import List, Tuple, Dict
+import heapq
+
+# Configuration parameters
+GRID_SIZE = 0.5  # meters per grid cell
+HEURISTIC_WEIGHT = 1.0  # A* heuristic weight (1.0 = optimal, >1.0 = faster)
+
+def find_path(
+    start: np.ndarray,
+    goal: np.ndarray,
+    obstacles: List[Dict],
+    robot_state: Dict
+) -> List[np.ndarray]:
+    \"\"\"
+    Find path from start to goal using A* algorithm
+
+    Args:
+        start: Start position [x, y]
+        goal: Goal position [x, y]
+        obstacles: List of obstacles with 'position' and 'radius'
+        robot_state: Current robot state
+
+    Returns:
+        List of waypoints from start to goal
+    \"\"\"
+    # Create grid
+    grid_size = GRID_SIZE
+    bounds = robot_state.get('bounds', {'min': [-10, -10], 'max': [10, 10]})
+
+    # Convert continuous space to grid
+    def world_to_grid(pos):
+        return (
+            int((pos[0] - bounds['min'][0]) / grid_size),
+            int((pos[1] - bounds['min'][1]) / grid_size)
         )
-        return d > obs.radius + SAFETY_MARGIN
-      })
 
-      if (isSafe) {
-        scenicPath.push(scenic)
-      }
-    }
+    def grid_to_world(grid_pos):
+        return np.array([
+            grid_pos[0] * grid_size + bounds['min'][0],
+            grid_pos[1] * grid_size + bounds['min'][1]
+        ])
 
-    scenicPath.push(curr)
-  }
+    # Check if cell is walkable
+    def is_walkable(grid_pos):
+        world_pos = grid_to_world(grid_pos)
+        for obs in obstacles:
+            obs_pos = np.array(obs['position'][:2])
+            if np.linalg.norm(world_pos - obs_pos) < obs['radius'] + 0.3:
+                return False
+        return True
 
-  return scenicPath
-}
+    # Heuristic (Euclidean distance)
+    def heuristic(a, b):
+        return np.linalg.norm(np.array(a) - np.array(b)) * HEURISTIC_WEIGHT
 
-function toGridKey(point: PathPoint): string {
-  return `${Math.round(point.x / GRID_RESOLUTION)},${Math.round(point.z / GRID_RESOLUTION)}`
-}
+    # A* algorithm
+    start_grid = world_to_grid(start)
+    goal_grid = world_to_grid(goal)
 
-function fromGridKey(key: string): PathPoint {
-  const [x, z] = key.split(',').map(Number)
-  return {
-    x: x * GRID_RESOLUTION,
-    z: z * GRID_RESOLUTION
-  }
-}
+    open_set = []
+    heapq.heappush(open_set, (0, start_grid))
+    came_from = {}
+    g_score = {start_grid: 0}
+    f_score = {start_grid: heuristic(start_grid, goal_grid)}
 
-export { findLongestPath }
+    while open_set:
+        current = heapq.heappop(open_set)[1]
+
+        if current == goal_grid:
+            # Reconstruct path
+            path = []
+            while current in came_from:
+                path.append(grid_to_world(current))
+                current = came_from[current]
+            path.append(grid_to_world(start_grid))
+            return path[::-1]
+
+        # Check neighbors (8-connected)
+        for dx, dy in [(-1,0), (1,0), (0,-1), (0,1), (-1,-1), (-1,1), (1,-1), (1,1)]:
+            neighbor = (current[0] + dx, current[1] + dy)
+
+            if not is_walkable(neighbor):
+                continue
+
+            tentative_g = g_score[current] + np.sqrt(dx**2 + dy**2)
+
+            if tentative_g < g_score.get(neighbor, float('inf')):
+                came_from[neighbor] = current
+                g_score[neighbor] = tentative_g
+                f_score[neighbor] = tentative_g + heuristic(neighbor, goal_grid)
+                heapq.heappush(open_set, (f_score[neighbor], neighbor))
+
+    # No path found
+    return [start, goal]
 """,
+
+            "rrt": """
+# RRT (Rapidly-exploring Random Tree) Path Planning
+# Python/Genesis implementation
+
+import numpy as np
+from typing import List, Dict
+
+# Configuration
+MAX_ITERATIONS = 1000
+STEP_SIZE = 0.5  # meters
+GOAL_THRESHOLD = 0.5  # meters
+
+def find_path(
+    start: np.ndarray,
+    goal: np.ndarray,
+    obstacles: List[Dict],
+    robot_state: Dict
+) -> List[np.ndarray]:
+    \"\"\"
+    Find path using RRT algorithm
+
+    Args:
+        start: Start position [x, y]
+        goal: Goal position [x, y]
+        obstacles: List of obstacles
+        robot_state: Robot state
+
+    Returns:
+        List of waypoints
+    \"\"\"
+    class Node:
+        def __init__(self, pos):
+            self.pos = np.array(pos)
+            self.parent = None
+
+    def is_collision_free(pos):
+        for obs in obstacles:
+            obs_pos = np.array(obs['position'][:2])
+            if np.linalg.norm(pos - obs_pos) < obs['radius'] + 0.3:
+                return False
+        return True
+
+    def nearest_node(tree, pos):
+        return min(tree, key=lambda n: np.linalg.norm(n.pos - pos))
+
+    def steer(from_pos, to_pos, step_size):
+        direction = to_pos - from_pos
+        dist = np.linalg.norm(direction)
+        if dist < step_size:
+            return to_pos
+        return from_pos + direction / dist * step_size
+
+    # Initialize tree
+    tree = [Node(start)]
+    bounds = robot_state.get('bounds', {'min': [-10, -10], 'max': [10, 10]})
+
+    for i in range(MAX_ITERATIONS):
+        # Sample random point (bias towards goal)
+        if np.random.rand() < 0.1:
+            rand_pos = goal
+        else:
+            rand_pos = np.array([
+                np.random.uniform(bounds['min'][0], bounds['max'][0]),
+                np.random.uniform(bounds['min'][1], bounds['max'][1])
+            ])
+
+        # Find nearest node
+        nearest = nearest_node(tree, rand_pos)
+
+        # Steer towards random point
+        new_pos = steer(nearest.pos, rand_pos, STEP_SIZE)
+
+        # Check if collision-free
+        if is_collision_free(new_pos):
+            new_node = Node(new_pos)
+            new_node.parent = nearest
+            tree.append(new_node)
+
+            # Check if goal reached
+            if np.linalg.norm(new_pos - goal) < GOAL_THRESHOLD:
+                # Reconstruct path
+                path = []
+                node = new_node
+                while node is not None:
+                    path.append(node.pos)
+                    node = node.parent
+                return path[::-1]
+
+    # No path found, return straight line
+    return [start, goal]
+"""
         }
 
     @staticmethod
     def obstacle_avoidance_templates() -> Dict[str, str]:
-        """Obstacle avoidance algorithm templates"""
+        """Obstacle avoidance algorithm templates (Python/Genesis)"""
         return {
             "dwa": """
-// Dynamic Window Approach (DWA) for Obstacle Avoidance
-// Based on: "Robot obstacle avoidance optimization by A* and DWA fusion algorithm" (PLOS One, 2024)
-//
-// Local trajectory optimization that considers robot dynamics
-// Runs in real-time at 60 FPS for reactive obstacle avoidance
-// Time Complexity: O(n * m) where n=velocity samples, m=angular velocity samples
+# Dynamic Window Approach (DWA) Obstacle Avoidance
+# Python/Genesis implementation
 
-import * as THREE from 'three'
+import numpy as np
+from typing import List, Dict, Tuple
 
-// Configuration parameters
-const MAX_SPEED = 2.0  // m/s
-const MAX_ANGULAR_SPEED = 2.0  // rad/s
-const MAX_ACCELERATION = 1.5  // m/s²
-const MAX_ANGULAR_ACCELERATION = 3.0  // rad/s²
-const PREDICTION_TIME = 2.0  // seconds to predict trajectory
-const DT = 0.1  // time step for trajectory simulation
-const SAFETY_MARGIN = 0.8  // meters from obstacles
+# Configuration
+MAX_SPEED = 2.0  # m/s
+MAX_ANGULAR_SPEED = 1.0  # rad/s
+MAX_ACCEL = 0.5  # m/s^2
+MAX_ANGULAR_ACCEL = 1.0  # rad/s^2
+DT = 0.1  # Time step
+PREDICT_TIME = 2.0  # Prediction horizon
+ROBOT_RADIUS = 0.3  # meters
 
-const VELOCITY_SAMPLES = 10
-const ANGULAR_SAMPLES = 20
+def compute_safe_velocity(
+    start: np.ndarray,
+    goal: np.ndarray,
+    obstacles: List[Dict],
+    robot_state: Dict
+) -> np.ndarray:
+    \"\"\"
+    Compute safe velocity using DWA
 
-// Weight factors for scoring function
-const HEADING_WEIGHT = 0.4  // Align with goal direction
-const CLEARANCE_WEIGHT = 0.3  // Stay away from obstacles
-const VELOCITY_WEIGHT = 0.3  // Prefer higher velocities
+    Args:
+        start: Current position [x, y]
+        goal: Goal position [x, y]
+        obstacles: List of obstacles
+        robot_state: Current robot state with 'velocity' and 'angular_velocity'
 
-interface DWAState {
-  position: THREE.Vector3
-  velocity: number  // Linear velocity (m/s)
-  angularVelocity: number  // rad/s
-  heading: number  // Current orientation (radians)
-}
+    Returns:
+        Safe velocity command [vx, vy, omega]
+    \"\"\"
+    current_vel = robot_state.get('velocity', np.zeros(3))
+    current_omega = robot_state.get('angular_velocity', np.zeros(3))
 
-interface DWACommand {
-  velocity: number
-  angularVelocity: number
-  predictedPath: THREE.Vector3[]
-}
+    v = current_vel[0]  # Current linear velocity
+    omega = current_omega[2]  # Current angular velocity
 
-function calculateSafeVelocity(
-  currentState: DWAState,
-  goal: THREE.Vector3,
-  obstacles: Array<{position: THREE.Vector3, radius: number}>,
-  deltaTime: number
-): DWACommand {
-  // 1. Calculate dynamic window (reachable velocities)
-  const dynamicWindow = calculateDynamicWindow(currentState, deltaTime)
+    # Dynamic window (achievable velocities)
+    v_min = max(0, v - MAX_ACCEL * DT)
+    v_max = min(MAX_SPEED, v + MAX_ACCEL * DT)
+    omega_min = max(-MAX_ANGULAR_SPEED, omega - MAX_ANGULAR_ACCEL * DT)
+    omega_max = min(MAX_ANGULAR_SPEED, omega + MAX_ANGULAR_ACCEL * DT)
 
-  // 2. Sample velocities within dynamic window
-  let bestCommand: DWACommand = {
-    velocity: 0,
-    angularVelocity: 0,
-    predictedPath: []
-  }
-  let bestScore = -Infinity
+    best_score = -float('inf')
+    best_v, best_omega = v, omega
 
-  for (let v = dynamicWindow.minV; v <= dynamicWindow.maxV; v += (dynamicWindow.maxV - dynamicWindow.minV) / VELOCITY_SAMPLES) {
-    for (let w = dynamicWindow.minW; w <= dynamicWindow.maxW; w += (dynamicWindow.maxW - dynamicWindow.minW) / ANGULAR_SAMPLES) {
+    # Sample velocity space
+    for test_v in np.linspace(v_min, v_max, 10):
+        for test_omega in np.linspace(omega_min, omega_max, 10):
+            # Simulate trajectory
+            trajectory = simulate_trajectory(start, test_v, test_omega, PREDICT_TIME)
 
-      // 3. Predict trajectory for this velocity pair
-      const trajectory = predictTrajectory(currentState, v, w, PREDICTION_TIME, DT)
+            # Check collision
+            if not is_trajectory_safe(trajectory, obstacles):
+                continue
 
-      // 4. Check collision
-      const clearance = calculateClearance(trajectory, obstacles)
-      if (clearance < SAFETY_MARGIN) continue  // Skip unsafe trajectories
+            # Score trajectory
+            score = score_trajectory(trajectory, goal, test_v, test_omega)
 
-      // 5. Calculate score
-      const headingScore = calculateHeadingScore(trajectory, goal)
-      const clearanceScore = clearance / (SAFETY_MARGIN * 3)  // Normalize
-      const velocityScore = v / MAX_SPEED
+            if score > best_score:
+                best_score = score
+                best_v = test_v
+                best_omega = test_omega
 
-      const score =
-        HEADING_WEIGHT * headingScore +
-        CLEARANCE_WEIGHT * clearanceScore +
-        VELOCITY_WEIGHT * velocityScore
+    return np.array([best_v, 0, best_omega])
 
-      // 6. Track best command
-      if (score > bestScore) {
-        bestScore = score
-        bestCommand = { velocity: v, angularVelocity: w, predictedPath: trajectory }
-      }
-    }
-  }
+def simulate_trajectory(start, v, omega, time_horizon):
+    \"\"\"Simulate robot trajectory\"\"\"
+    trajectory = [start[:2].copy()]
+    pos = start[:2].copy()
+    theta = 0.0
 
-  return bestCommand
-}
+    steps = int(time_horizon / DT)
+    for _ in range(steps):
+        pos[0] += v * np.cos(theta) * DT
+        pos[1] += v * np.sin(theta) * DT
+        theta += omega * DT
+        trajectory.append(pos.copy())
 
-function calculateDynamicWindow(state: DWAState, dt: number) {
-  // Velocities reachable within one time step given acceleration limits
-  return {
-    minV: Math.max(0, state.velocity - MAX_ACCELERATION * dt),
-    maxV: Math.min(MAX_SPEED, state.velocity + MAX_ACCELERATION * dt),
-    minW: Math.max(-MAX_ANGULAR_SPEED, state.angularVelocity - MAX_ANGULAR_ACCELERATION * dt),
-    maxW: Math.min(MAX_ANGULAR_SPEED, state.angularVelocity + MAX_ANGULAR_ACCELERATION * dt)
-  }
-}
+    return np.array(trajectory)
 
-function predictTrajectory(
-  state: DWAState,
-  v: number,
-  w: number,
-  time: number,
-  dt: number
-): THREE.Vector3[] {
-  const trajectory: THREE.Vector3[] = []
-  let x = state.position.x
-  let z = state.position.z
-  let theta = state.heading
+def is_trajectory_safe(trajectory, obstacles):
+    \"\"\"Check if trajectory collides with obstacles\"\"\"
+    for pos in trajectory:
+        for obs in obstacles:
+            obs_pos = np.array(obs['position'][:2])
+            if np.linalg.norm(pos - obs_pos) < ROBOT_RADIUS + obs['radius']:
+                return False
+    return True
 
-  for (let t = 0; t < time; t += dt) {
-    x += v * Math.cos(theta) * dt
-    z += v * Math.sin(theta) * dt
-    theta += w * dt
-    trajectory.push(new THREE.Vector3(x, 0.5, z))
-  }
+def score_trajectory(trajectory, goal, v, omega):
+    \"\"\"Score trajectory based on goal proximity and smoothness\"\"\"
+    # Distance to goal
+    goal_dist = np.linalg.norm(trajectory[-1] - goal[:2])
+    goal_score = 1.0 / (1.0 + goal_dist)
 
-  return trajectory
-}
+    # Velocity score (prefer higher velocities)
+    vel_score = v / MAX_SPEED
 
-function calculateClearance(
-  trajectory: THREE.Vector3[],
-  obstacles: Array<{position: THREE.Vector3, radius: number}>
-): number {
-  let minClearance = Infinity
+    # Smoothness score (prefer lower angular velocity)
+    smooth_score = 1.0 - abs(omega) / MAX_ANGULAR_SPEED
 
-  for (const point of trajectory) {
-    for (const obstacle of obstacles) {
-      const dist = point.distanceTo(obstacle.position) - obstacle.radius
-      minClearance = Math.min(minClearance, dist)
-    }
-  }
-
-  return minClearance
-}
-
-function calculateHeadingScore(trajectory: THREE.Vector3[], goal: THREE.Vector3): number {
-  // Score based on alignment with goal direction
-  const lastPoint = trajectory[trajectory.length - 1]
-  const directionToGoal = goal.clone().sub(lastPoint).normalize()
-  const trajectoryDirection = lastPoint.clone().sub(trajectory[0]).normalize()
-
-  // Dot product gives cos(angle), range [-1, 1]
-  const alignment = directionToGoal.dot(trajectoryDirection)
-  return (alignment + 1) / 2  // Normalize to [0, 1]
-}
-
-export { calculateSafeVelocity, type DWAState, type DWACommand }
-""",
-            "apf": """
-// Artificial Potential Field (APF) for Obstacle Avoidance
-// Simple and computationally efficient
-// Good for sparse environments with few obstacles
-// Time Complexity: O(n) where n = number of obstacles
-
-import * as THREE from 'three'
-
-const ATTRACTIVE_GAIN = 1.0  // Pull towards goal
-const REPULSIVE_GAIN = 2.0  // Push away from obstacles
-const INFLUENCE_DISTANCE = 2.0  // meters - obstacles beyond this don't affect robot
-
-function calculateAPFVelocity(
-  position: THREE.Vector3,
-  goal: THREE.Vector3,
-  obstacles: Array<{position: THREE.Vector3, radius: number}>,
-  maxSpeed: number
-): THREE.Vector3 {
-  // Attractive force towards goal
-  const attractiveForce = goal.clone().sub(position).normalize().multiplyScalar(ATTRACTIVE_GAIN)
-
-  // Repulsive force from obstacles
-  const repulsiveForce = new THREE.Vector3()
-
-  for (const obstacle of obstacles) {
-    const diff = position.clone().sub(obstacle.position)
-    const distance = diff.length() - obstacle.radius
-
-    if (distance < INFLUENCE_DISTANCE && distance > 0) {
-      const magnitude = REPULSIVE_GAIN * (1.0 / distance - 1.0 / INFLUENCE_DISTANCE) * (1.0 / (distance * distance))
-      repulsiveForce.add(diff.normalize().multiplyScalar(magnitude))
-    }
-  }
-
-  // Combine forces
-  const totalForce = attractiveForce.add(repulsiveForce)
-
-  // Limit to max speed
-  if (totalForce.length() > maxSpeed) {
-    totalForce.normalize().multiplyScalar(maxSpeed)
-  }
-
-  return totalForce
-}
-
-export { calculateAPFVelocity }
-""",
+    # Combined score
+    return 2.0 * goal_score + 1.0 * vel_score + 0.5 * smooth_score
+"""
         }
 
     @staticmethod
     def inverse_kinematics_templates() -> Dict[str, str]:
-        """Inverse kinematics algorithm templates"""
+        """Inverse kinematics algorithm templates (Python/Genesis)"""
         return {
             "fabrik": """
-// FABRIK (Forward And Backward Reaching Inverse Kinematics)
-// Based on: "A Combined Inverse Kinematics Algorithm Using FABRIK with Optimization"
-//
-// Efficient IK solver for serial manipulators
-// Time Complexity: O(n) per iteration, typically converges in 5-10 iterations
-// Space Complexity: O(n) where n = number of joints
+# FABRIK (Forward And Backward Reaching Inverse Kinematics)
+# Python/Genesis implementation
 
-import * as THREE from 'three'
+import numpy as np
+from typing import List, Dict
 
-const MAX_ITERATIONS = 20
-const TOLERANCE = 0.01  // meters
-const JOINT_LIMITS = true  // Enforce joint angle constraints
+# Configuration
+MAX_ITERATIONS = 100
+TOLERANCE = 0.01  # meters
+LINK_LENGTHS = [0.3, 0.25, 0.2, 0.15]  # Example link lengths
 
-interface JointChain {
-  positions: THREE.Vector3[]  // Joint positions in 3D space
-  lengths: number[]  // Link lengths
-  limits?: Array<{min: number, max: number}>  // Joint angle limits (radians)
-}
+def solve_ik(
+    start: np.ndarray,
+    goal: np.ndarray,
+    obstacles: List[Dict],
+    robot_state: Dict
+) -> np.ndarray:
+    \"\"\"
+    Solve inverse kinematics using FABRIK
 
-interface IKResult {
-  jointAngles: number[]
-  endEffectorPos: THREE.Vector3
-  reachedTarget: boolean
-  iterations: number
-}
+    Args:
+        start: Base position [x, y, z]
+        goal: Target end-effector position [x, y, z]
+        obstacles: Not used for IK
+        robot_state: Current joint angles
 
-function solveIK(
-  chain: JointChain,
-  targetPos: THREE.Vector3,
-  basePos: THREE.Vector3
-): IKResult {
-  const n = chain.positions.length
-  let positions = chain.positions.map(p => p.clone())
-  let iterations = 0
+    Returns:
+        Joint angles to reach target
+    \"\"\"
+    # Get current joint positions
+    link_lengths = robot_state.get('link_lengths', LINK_LENGTHS)
+    n_joints = len(link_lengths)
 
-  // Check if target is reachable
-  const totalLength = chain.lengths.reduce((sum, len) => sum + len, 0)
-  const distanceToTarget = targetPos.distanceTo(basePos)
+    # Initialize joint positions
+    base = start.copy()
+    target = goal.copy()
 
-  if (distanceToTarget > totalLength) {
-    // Target unreachable - extend fully towards target
-    return extendTowardsTarget(chain, targetPos, basePos)
-  }
+    # Initialize joints along straight line from base to target
+    direction = target - base
+    total_length = np.sum(link_lengths)
+    dist = np.linalg.norm(direction)
 
-  // FABRIK iteration
-  for (iterations = 0; iterations < MAX_ITERATIONS; iterations++) {
-    // Check if reached target
-    const endEffector = positions[n - 1]
-    if (endEffector.distanceTo(targetPos) < TOLERANCE) {
-      break
-    }
+    # Check if target is reachable
+    if dist > total_length:
+        target = base + direction / dist * total_length * 0.95
 
-    // Backward reaching - start from end effector
-    positions[n - 1] = targetPos.clone()
+    # Initialize joint positions
+    joints = [base.copy()]
+    for i, length in enumerate(link_lengths):
+        ratio = (i + 1) / n_joints
+        joints.append(base + direction * ratio)
 
-    for (let i = n - 2; i >= 0; i--) {
-      const direction = positions[i].clone().sub(positions[i + 1]).normalize()
-      positions[i] = positions[i + 1].clone().add(direction.multiplyScalar(chain.lengths[i]))
-    }
+    # FABRIK algorithm
+    for iteration in range(MAX_ITERATIONS):
+        # Forward reaching
+        joints[-1] = target.copy()
+        for i in range(n_joints - 1, 0, -1):
+            direction = joints[i] - joints[i + 1]
+            joints[i] = joints[i + 1] + direction / np.linalg.norm(direction) * link_lengths[i]
 
-    // Forward reaching - start from base
-    positions[0] = basePos.clone()
+        # Backward reaching
+        joints[0] = base.copy()
+        for i in range(n_joints):
+            direction = joints[i + 1] - joints[i]
+            dist = np.linalg.norm(direction)
+            if dist > 0:
+                joints[i + 1] = joints[i] + direction / dist * link_lengths[i]
 
-    for (let i = 0; i < n - 1; i++) {
-      const direction = positions[i + 1].clone().sub(positions[i]).normalize()
-      positions[i + 1] = positions[i].clone().add(direction.multiplyScalar(chain.lengths[i]))
-    }
-  }
+        # Check convergence
+        if np.linalg.norm(joints[-1] - target) < TOLERANCE:
+            break
 
-  // Convert positions to joint angles
-  const jointAngles = positionsToAngles(positions, basePos)
+    # Convert joint positions to angles
+    angles = []
+    for i in range(n_joints):
+        vec1 = joints[i + 1] - joints[i]
+        angle = np.arctan2(vec1[1], vec1[0])
+        angles.append(angle)
 
-  // Apply joint limits if enabled
-  if (JOINT_LIMITS && chain.limits) {
-    applyJointLimits(jointAngles, chain.limits)
-  }
-
-  return {
-    jointAngles,
-    endEffectorPos: positions[n - 1],
-    reachedTarget: positions[n - 1].distanceTo(targetPos) < TOLERANCE,
-    iterations
-  }
-}
-
-function positionsToAngles(positions: THREE.Vector3[], basePos: THREE.Vector3): number[] {
-  const angles: number[] = []
-
-  for (let i = 0; i < positions.length - 1; i++) {
-    const current = positions[i]
-    const next = positions[i + 1]
-    const direction = next.clone().sub(current)
-
-    // Calculate angle in XZ plane (yaw)
-    const angle = Math.atan2(direction.z, direction.x)
-    angles.push(angle)
-  }
-
-  return angles
-}
-
-function applyJointLimits(angles: number[], limits: Array<{min: number, max: number}>) {
-  for (let i = 0; i < angles.length && i < limits.length; i++) {
-    angles[i] = Math.max(limits[i].min, Math.min(limits[i].max, angles[i]))
-  }
-}
-
-function extendTowardsTarget(
-  chain: JointChain,
-  targetPos: THREE.Vector3,
-  basePos: THREE.Vector3
-): IKResult {
-  // Target unreachable - extend arm fully in that direction
-  const direction = targetPos.clone().sub(basePos).normalize()
-  const positions: THREE.Vector3[] = [basePos.clone()]
-
-  for (let i = 0; i < chain.lengths.length; i++) {
-    const nextPos = positions[i].clone().add(direction.clone().multiplyScalar(chain.lengths[i]))
-    positions.push(nextPos)
-  }
-
-  const jointAngles = positionsToAngles(positions, basePos)
-
-  return {
-    jointAngles,
-    endEffectorPos: positions[positions.length - 1],
-    reachedTarget: false,
-    iterations: MAX_ITERATIONS
-  }
-}
-
-export { solveIK, type JointChain, type IKResult }
-""",
-            "ccd": """
-// CCD (Cyclic Coordinate Descent) Inverse Kinematics
-// Simpler than FABRIK, iterates through joints one at a time
-// Good for real-time applications with many joints
-// Time Complexity: O(n) per iteration
-
-import * as THREE from 'three'
-
-const MAX_ITERATIONS = 15
-const TOLERANCE = 0.05
-
-function solveIKCCD(
-  jointPositions: THREE.Vector3[],
-  targetPos: THREE.Vector3
-): number[] {
-  const n = jointPositions.length
-  const angles: number[] = new Array(n - 1).fill(0)
-
-  for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
-    // Check if reached target
-    const endEffector = jointPositions[n - 1]
-    if (endEffector.distanceTo(targetPos) < TOLERANCE) {
-      break
-    }
-
-    // Iterate backwards through joints
-    for (let i = n - 2; i >= 0; i--) {
-      const joint = jointPositions[i]
-      const toEnd = endEffector.clone().sub(joint)
-      const toTarget = targetPos.clone().sub(joint)
-
-      // Calculate rotation angle
-      const angle = toEnd.angleTo(toTarget)
-      const axis = new THREE.Vector3().crossVectors(toEnd, toTarget).normalize()
-
-      // Rotate all joints after this one
-      for (let j = i + 1; j < n; j++) {
-        jointPositions[j].sub(joint).applyAxisAngle(axis, angle).add(joint)
-      }
-
-      angles[i] += angle
-    }
-  }
-
-  return angles
-}
-
-export { solveIKCCD }
-""",
+    return np.array(angles)
+"""
         }
 
     @staticmethod
     def computer_vision_templates() -> Dict[str, str]:
-        """Computer vision algorithm templates"""
+        """Computer vision algorithm templates (Python/Genesis)"""
         return {
             "object_detection": """
-// Object Detection with Bounding Boxes
-// Based on: "Combining YOLO11 and Depth Pro for Accurate Distance Estimation"
-//
-// Simulated object detection for web-based robotics
-// In production, would use actual YOLO11 model
-// Time Complexity: O(n) where n = number of objects in scene
+# Object Detection using Genesis Camera
+# Python/Genesis implementation
 
-import * as THREE from 'three'
+import numpy as np
+from typing import List, Dict
 
-const DETECTION_CONFIDENCE_THRESHOLD = 0.5
-const DETECTION_RANGE = 10.0  // meters
-const CAMERA_FOV = 75  // degrees
-const IMAGE_WIDTH = 640
-const IMAGE_HEIGHT = 480
+def process_vision(
+    start: np.ndarray,
+    goal: np.ndarray,
+    obstacles: List[Dict],
+    robot_state: Dict
+) -> Dict:
+    \"\"\"
+    Process vision data from Genesis camera
 
-interface Detection {
-  label: string
-  confidence: number
-  bbox: {
-    x: number  // pixels
-    y: number
-    width: number
-    height: number
-  }
-  position3D: THREE.Vector3  // World position
-  distance: number  // meters from camera
-  color?: string  // For visualization
-}
+    Args:
+        start: Camera position
+        goal: Not used
+        obstacles: Scene obstacles
+        robot_state: Contains camera data if available
 
-interface CameraState {
-  position: THREE.Vector3
-  direction: THREE.Vector3  // Forward direction
-  up: THREE.Vector3
-}
+    Returns:
+        Dictionary with detected objects
+    \"\"\"
+    # Get camera data from robot state
+    rgb_frame = robot_state.get('camera_rgb', None)
+    depth_frame = robot_state.get('camera_depth', None)
 
-function detectObjects(
-  camera: CameraState,
-  objects: Array<{
-    position: THREE.Vector3
-    label: string
-    radius: number
-    color?: string
-  }>
-): Detection[] {
-  const detections: Detection[] = []
+    detected_objects = []
 
-  for (const obj of objects) {
-    // 1. Check if object is in camera frustum
-    const toObject = obj.position.clone().sub(camera.position)
-    const distance = toObject.length()
+    if rgb_frame is not None:
+        # Simple color-based detection (placeholder)
+        # In real implementation, would use YOLO, etc.
+        height, width = rgb_frame.shape[:2]
 
-    if (distance > DETECTION_RANGE) continue
+        # Detect red objects (example)
+        red_mask = (rgb_frame[:, :, 0] > 150) & (rgb_frame[:, :, 1] < 100) & (rgb_frame[:, :, 2] < 100)
+        red_pixels = np.argwhere(red_mask)
 
-    // 2. Check if object is in front of camera
-    const dotProduct = toObject.normalize().dot(camera.direction)
-    if (dotProduct < 0.5) continue  // Not in view cone
+        if len(red_pixels) > 0:
+            # Get bounding box
+            y_min, x_min = red_pixels.min(axis=0)
+            y_max, x_max = red_pixels.max(axis=0)
 
-    // 3. Project to 2D screen space
-    const screenPos = projectToScreen(obj.position, camera)
+            detected_objects.append({
+                'class': 'red_object',
+                'bbox': [x_min, y_min, x_max, y_max],
+                'confidence': 0.85
+            })
 
-    if (!screenPos) continue  // Behind camera or out of view
+    if depth_frame is not None:
+        # Estimate distance to objects
+        for obj in detected_objects:
+            x_center = (obj['bbox'][0] + obj['bbox'][2]) // 2
+            y_center = (obj['bbox'][1] + obj['bbox'][3]) // 2
+            obj['distance'] = float(depth_frame[y_center, x_center])
 
-    // 4. Calculate bounding box
-    const apparentSize = (obj.radius * IMAGE_HEIGHT) / distance
-    const bbox = {
-      x: Math.max(0, screenPos.x - apparentSize),
-      y: Math.max(0, screenPos.y - apparentSize),
-      width: Math.min(IMAGE_WIDTH, apparentSize * 2),
-      height: Math.min(IMAGE_HEIGHT, apparentSize * 2)
+    return {
+        'objects': detected_objects,
+        'frame_width': rgb_frame.shape[1] if rgb_frame is not None else 0,
+        'frame_height': rgb_frame.shape[0] if rgb_frame is not None else 0
     }
-
-    // 5. Simulate confidence based on distance and size
-    const confidence = calculateConfidence(distance, apparentSize)
-
-    if (confidence >= DETECTION_CONFIDENCE_THRESHOLD) {
-      detections.push({
-        label: obj.label,
-        confidence,
-        bbox,
-        position3D: obj.position.clone(),
-        distance,
-        color: obj.color || '#00ff00'
-      })
-    }
-  }
-
-  return detections
-}
-
-function projectToScreen(
-  worldPos: THREE.Vector3,
-  camera: CameraState
-): {x: number, y: number} | null {
-  // Simple perspective projection
-  const cameraToPoint = worldPos.clone().sub(camera.position)
-
-  // Transform to camera space
-  const right = new THREE.Vector3().crossVectors(camera.direction, camera.up).normalize()
-  const up = camera.up.clone()
-  const forward = camera.direction.clone()
-
-  const x = cameraToPoint.dot(right)
-  const y = cameraToPoint.dot(up)
-  const z = cameraToPoint.dot(forward)
-
-  if (z <= 0) return null  // Behind camera
-
-  // Perspective divide
-  const fov = (CAMERA_FOV * Math.PI) / 180
-  const f = IMAGE_HEIGHT / (2 * Math.tan(fov / 2))
-
-  const screenX = (x / z) * f + IMAGE_WIDTH / 2
-  const screenY = -(y / z) * f + IMAGE_HEIGHT / 2
-
-  return { x: screenX, y: screenY }
-}
-
-function calculateConfidence(distance: number, apparentSize: number): number {
-  // Confidence decreases with distance and small apparent size
-  const distanceFactor = Math.max(0, 1 - distance / DETECTION_RANGE)
-  const sizeFactor = Math.min(1, apparentSize / 50)
-  return distanceFactor * sizeFactor
-}
-
-export { detectObjects, type Detection, type CameraState }
-""",
-            "object_tracking": """
-// Object Tracking with Kalman Filter
-// Tracks detected objects across frames for consistent identification
-// Time Complexity: O(n*m) where n=current detections, m=tracked objects
-
-import * as THREE from 'three'
-
-const MAX_TRACKING_DISTANCE = 2.0  // meters
-const MAX_FRAMES_LOST = 30  // Drop track after 30 frames without detection
-const VELOCITY_SMOOTHING = 0.3  // Low-pass filter coefficient
-
-interface TrackedObject {
-  id: number
-  label: string
-  position: THREE.Vector3
-  velocity: THREE.Vector3
-  lastSeen: number  // Frame number
-  confidence: number
-  predictedPosition: THREE.Vector3
-}
-
-interface TrackingState {
-  trackedObjects: TrackedObject[]
-  nextId: number
-  frameCount: number
-}
-
-function trackObjects(
-  detections: Array<{
-    label: string
-    position3D: THREE.Vector3
-    confidence: number
-  }>,
-  state: TrackingState,
-  deltaTime: number
-): TrackedObject[] {
-  state.frameCount++
-
-  // 1. Predict positions of existing tracks
-  for (const track of state.trackedObjects) {
-    track.predictedPosition = track.position.clone().add(
-      track.velocity.clone().multiplyScalar(deltaTime)
-    )
-  }
-
-  // 2. Associate detections with existing tracks
-  const assigned = new Set<number>()
-  const updatedTracks: TrackedObject[] = []
-
-  for (const detection of detections) {
-    let bestMatch: TrackedObject | null = null
-    let bestDistance = MAX_TRACKING_DISTANCE
-
-    // Find closest track with matching label
-    for (let i = 0; i < state.trackedObjects.length; i++) {
-      if (assigned.has(i)) continue
-
-      const track = state.trackedObjects[i]
-      if (track.label !== detection.label) continue
-
-      const distance = track.predictedPosition.distanceTo(detection.position3D)
-      if (distance < bestDistance) {
-        bestDistance = distance
-        bestMatch = track
-      }
-    }
-
-    if (bestMatch) {
-      // Update existing track
-      const newVelocity = detection.position3D.clone()
-        .sub(bestMatch.position)
-        .divideScalar(deltaTime)
-
-      bestMatch.velocity.lerp(newVelocity, VELOCITY_SMOOTHING)
-      bestMatch.position.copy(detection.position3D)
-      bestMatch.lastSeen = state.frameCount
-      bestMatch.confidence = detection.confidence
-
-      updatedTracks.push(bestMatch)
-      assigned.add(state.trackedObjects.indexOf(bestMatch))
-    } else {
-      // Create new track
-      updatedTracks.push({
-        id: state.nextId++,
-        label: detection.label,
-        position: detection.position3D.clone(),
-        velocity: new THREE.Vector3(),
-        lastSeen: state.frameCount,
-        confidence: detection.confidence,
-        predictedPosition: detection.position3D.clone()
-      })
-    }
-  }
-
-  // 3. Keep tracks that were recently seen
-  for (const track of state.trackedObjects) {
-    const framesSinceSeen = state.frameCount - track.lastSeen
-    if (framesSinceSeen < MAX_FRAMES_LOST && !updatedTracks.includes(track)) {
-      updatedTracks.push(track)
-    }
-  }
-
-  state.trackedObjects = updatedTracks
-  return updatedTracks
-}
-
-export { trackObjects, type TrackedObject, type TrackingState }
-""",
-            "feature_detection": """
-// Feature Detection and Matching
-// Detects distinctive features in the scene for localization and mapping
-// Time Complexity: O(n) where n = number of scene points
-
-import * as THREE from 'three'
-
-const FEATURE_DETECTION_THRESHOLD = 0.3
-const FEATURE_MATCH_THRESHOLD = 0.7
-const RANSAC_ITERATIONS = 100
-const RANSAC_THRESHOLD = 0.1
-
-interface Feature {
-  position: THREE.Vector2  // 2D image coordinates
-  position3D: THREE.Vector3  // 3D world coordinates
-  descriptor: number[]  // Feature descriptor (simplified)
-  strength: number  // Corner response strength
-}
-
-interface FeatureMatch {
-  feature1: Feature
-  feature2: Feature
-  distance: number
-  isInlier: boolean
-}
-
-function detectFeatures(
-  camera: {
-    position: THREE.Vector3
-    direction: THREE.Vector3
-  },
-  scenePoints: THREE.Vector3[],
-  imageWidth: number,
-  imageHeight: number
-): Feature[] {
-  const features: Feature[] = []
-
-  for (const point of scenePoints) {
-    // Project to 2D
-    const projected = projectPoint(point, camera, imageWidth, imageHeight)
-    if (!projected) continue
-
-    // Compute descriptor (simplified - use surrounding points)
-    const descriptor = computeDescriptor(point, scenePoints)
-
-    // Compute feature strength (simplified corner response)
-    const strength = computeFeatureStrength(point, scenePoints)
-
-    if (strength > FEATURE_DETECTION_THRESHOLD) {
-      features.push({
-        position: projected,
-        position3D: point.clone(),
-        descriptor,
-        strength
-      })
-    }
-  }
-
-  return features.sort((a, b) => b.strength - a.strength).slice(0, 100)  // Top 100 features
-}
-
-function matchFeatures(
-  features1: Feature[],
-  features2: Feature[]
-): FeatureMatch[] {
-  const matches: FeatureMatch[] = []
-
-  for (const f1 of features1) {
-    let bestMatch: Feature | null = null
-    let bestDistance = Infinity
-
-    for (const f2 of features2) {
-      const distance = descriptorDistance(f1.descriptor, f2.descriptor)
-      if (distance < bestDistance) {
-        bestDistance = distance
-        bestMatch = f2
-      }
-    }
-
-    if (bestMatch && bestDistance < FEATURE_MATCH_THRESHOLD) {
-      matches.push({
-        feature1: f1,
-        feature2: bestMatch,
-        distance: bestDistance,
-        isInlier: false  // Will be determined by RANSAC
-      })
-    }
-  }
-
-  // RANSAC to filter outliers
-  return ransacFilterMatches(matches)
-}
-
-function projectPoint(
-  point: THREE.Vector3,
-  camera: { position: THREE.Vector3, direction: THREE.Vector3 },
-  width: number,
-  height: number
-): THREE.Vector2 | null {
-  const toPoint = point.clone().sub(camera.position)
-  const distance = toPoint.dot(camera.direction)
-
-  if (distance <= 0) return null  // Behind camera
-
-  const x = (toPoint.x / distance) * width / 2 + width / 2
-  const y = (toPoint.y / distance) * height / 2 + height / 2
-
-  return new THREE.Vector2(x, y)
-}
-
-function computeDescriptor(point: THREE.Vector3, neighbors: THREE.Vector3[]): number[] {
-  // Simplified descriptor - average distances to nearby points
-  const descriptor: number[] = []
-  const nearby = neighbors
-    .filter(p => p.distanceTo(point) < 1.0 && p !== point)
-    .slice(0, 8)
-
-  for (const n of nearby) {
-    descriptor.push(point.distanceTo(n))
-  }
-
-  return descriptor
-}
-
-function computeFeatureStrength(point: THREE.Vector3, neighbors: THREE.Vector3[]): number {
-  // Simplified corner response - variance in nearby point distances
-  const nearby = neighbors.filter(p => p.distanceTo(point) < 0.5 && p !== point)
-  if (nearby.length < 3) return 0
-
-  const distances = nearby.map(p => point.distanceTo(p))
-  const mean = distances.reduce((a, b) => a + b, 0) / distances.length
-  const variance = distances.reduce((sum, d) => sum + (d - mean) ** 2, 0) / distances.length
-
-  return Math.sqrt(variance)
-}
-
-function descriptorDistance(desc1: number[], desc2: number[]): number {
-  let sum = 0
-  const len = Math.min(desc1.length, desc2.length)
-  for (let i = 0; i < len; i++) {
-    sum += (desc1[i] - desc2[i]) ** 2
-  }
-  return Math.sqrt(sum)
-}
-
-function ransacFilterMatches(matches: FeatureMatch[]): FeatureMatch[] {
-  let bestInliers: FeatureMatch[] = []
-
-  for (let i = 0; i < RANSAC_ITERATIONS; i++) {
-    // Sample random match
-    const sample = matches[Math.floor(Math.random() * matches.length)]
-
-    // Count inliers
-    const inliers = matches.filter(m => {
-      const dist = m.feature1.position3D.distanceTo(m.feature2.position3D)
-      return dist < RANSAC_THRESHOLD
-    })
-
-    if (inliers.length > bestInliers.length) {
-      bestInliers = inliers
-    }
-  }
-
-  // Mark inliers
-  bestInliers.forEach(m => m.isInlier = true)
-  return bestInliers
-}
-
-export { detectFeatures, matchFeatures, type Feature, type FeatureMatch }
-""",
-            "optical_flow": """
-// Optical Flow - Track Motion Between Frames
-// Estimates velocity field of moving objects/camera
-// Time Complexity: O(n) where n = number of tracked points
-
-import * as THREE from 'three'
-
-const FLOW_WINDOW_SIZE = 5  // Pixels
-const MAX_FLOW_MAGNITUDE = 50  // Pixels per frame
-const FLOW_SMOOTHING = 0.4
-
-interface FlowVector {
-  position: THREE.Vector2
-  velocity: THREE.Vector2  // Pixels per frame
-  magnitude: number
-}
-
-interface OpticalFlowState {
-  previousPoints: THREE.Vector2[]
-  flowVectors: FlowVector[]
-}
-
-function computeOpticalFlow(
-  currentPoints: THREE.Vector2[],
-  state: OpticalFlowState
-): FlowVector[] {
-  const flows: FlowVector[] = []
-
-  if (state.previousPoints.length === 0) {
-    state.previousPoints = currentPoints
-    return flows
-  }
-
-  // Match points and compute flow
-  for (let i = 0; i < Math.min(currentPoints.length, state.previousPoints.length); i++) {
-    const current = currentPoints[i]
-    const previous = state.previousPoints[i]
-
-    // Compute flow vector
-    const velocity = current.clone().sub(previous)
-    const magnitude = velocity.length()
-
-    // Filter large flows (likely mismatches)
-    if (magnitude > MAX_FLOW_MAGNITUDE) continue
-
-    // Smooth with previous flow if available
-    if (state.flowVectors[i]) {
-      velocity.lerp(state.flowVectors[i].velocity, FLOW_SMOOTHING)
-    }
-
-    flows.push({
-      position: current.clone(),
-      velocity,
-      magnitude: velocity.length()
-    })
-  }
-
-  state.previousPoints = currentPoints
-  state.flowVectors = flows
-
-  return flows
-}
-
-function estimateEgoMotion(flows: FlowVector[]): {
-  translation: THREE.Vector2
-  rotation: number
-} {
-  // Estimate camera motion from flow field
-  const avgFlow = new THREE.Vector2()
-  let rotationSum = 0
-
-  for (const flow of flows) {
-    avgFlow.add(flow.velocity)
-
-    // Estimate rotation from flow curl
-    const angle = Math.atan2(flow.velocity.y, flow.velocity.x)
-    rotationSum += angle
-  }
-
-  avgFlow.divideScalar(flows.length || 1)
-  const rotation = rotationSum / (flows.length || 1)
-
-  return {
-    translation: avgFlow,
-    rotation
-  }
-}
-
-export { computeOpticalFlow, estimateEgoMotion, type FlowVector, type OpticalFlowState }
-""",
-            "semantic_segmentation": """
-// Semantic Segmentation - Classify Each Pixel/Region
-// Labels different parts of the scene (floor, walls, objects, etc.)
-// Time Complexity: O(n) where n = number of scene elements
-
-import * as THREE from 'three'
-
-const SEGMENTATION_CLASSES = [
-  'floor',
-  'wall',
-  'obstacle',
-  'goal',
-  'robot',
-  'unknown'
-]
-
-interface SegmentedRegion {
-  class: string
-  confidence: number
-  points: THREE.Vector3[]
-  centroid: THREE.Vector3
-  color: string
-}
-
-function segmentScene(
-  objects: Array<{
-    position: THREE.Vector3
-    label: string
-    radius: number
-  }>,
-  floorLevel: number = 0
-): SegmentedRegion[] {
-  const segments: SegmentedRegion[] = []
-
-  // Segment floor
-  const floorPoints: THREE.Vector3[] = []
-  for (let x = -10; x <= 10; x += 0.5) {
-    for (let z = -10; z <= 10; z += 0.5) {
-      floorPoints.push(new THREE.Vector3(x, floorLevel, z))
-    }
-  }
-
-  segments.push({
-    class: 'floor',
-    confidence: 1.0,
-    points: floorPoints,
-    centroid: new THREE.Vector3(0, floorLevel, 0),
-    color: '#808080'
-  })
-
-  // Segment objects
-  for (const obj of objects) {
-    const objClass = classifyObject(obj.label)
-    const points = generateObjectPoints(obj.position, obj.radius)
-
-    segments.push({
-      class: objClass,
-      confidence: 0.9,
-      points,
-      centroid: obj.position.clone(),
-      color: getClassColor(objClass)
-    })
-  }
-
-  return segments
-}
-
-function classifyObject(label: string): string {
-  const lowerLabel = label.toLowerCase()
-
-  if (lowerLabel.includes('goal') || lowerLabel.includes('target')) {
-    return 'goal'
-  } else if (lowerLabel.includes('robot')) {
-    return 'robot'
-  } else if (lowerLabel.includes('wall')) {
-    return 'wall'
-  } else if (lowerLabel.includes('obstacle') || lowerLabel.includes('box')) {
-    return 'obstacle'
-  }
-
-  return 'unknown'
-}
-
-function generateObjectPoints(center: THREE.Vector3, radius: number): THREE.Vector3[] {
-  const points: THREE.Vector3[] = []
-  const samples = 20
-
-  for (let i = 0; i < samples; i++) {
-    const theta = (i / samples) * Math.PI * 2
-    const x = center.x + radius * Math.cos(theta)
-    const z = center.z + radius * Math.sin(theta)
-    points.push(new THREE.Vector3(x, center.y, z))
-  }
-
-  return points
-}
-
-function getClassColor(className: string): string {
-  const colorMap: Record<string, string> = {
-    'floor': '#808080',
-    'wall': '#654321',
-    'obstacle': '#ff0000',
-    'goal': '#00ff00',
-    'robot': '#0000ff',
-    'unknown': '#888888'
-  }
-
-  return colorMap[className] || '#888888'
-}
-
-export { segmentScene, type SegmentedRegion, SEGMENTATION_CLASSES }
-""",
+"""
         }
 
     @staticmethod
     def motion_control_templates() -> Dict[str, str]:
-        """Motion control algorithm templates"""
+        """Motion control algorithm templates (Python/Genesis)"""
         return {
-            "pid_controller": """
-// PID Controller for Motion Control
-// Classic control algorithm for position/velocity tracking
-// Time Complexity: O(1)
+            "pd_controller": """
+# PD Controller for Robot Control
+# Python/Genesis implementation
 
-const KP = 2.0  // Proportional gain
-const KI = 0.1  // Integral gain
-const KD = 0.5  // Derivative gain
-const MAX_INTEGRAL = 10.0  // Anti-windup limit
+import numpy as np
+from typing import List, Dict
 
-interface PIDState {
-  integral: number
-  previousError: number
-}
+# Configuration
+KP = 10.0  # Proportional gain
+KD = 2.0   # Derivative gain
 
-function pidControl(
-  current: number,
-  target: number,
-  state: PIDState,
-  deltaTime: number
-): number {
-  const error = target - current
+def compute_control(
+    start: np.ndarray,
+    goal: np.ndarray,
+    obstacles: List[Dict],
+    robot_state: Dict
+) -> np.ndarray:
+    \"\"\"
+    Compute control command using PD controller
 
-  // Proportional term
-  const P = KP * error
+    Args:
+        start: Current position [x, y]
+        goal: Target position [x, y]
+        obstacles: Not used
+        robot_state: Current velocity and acceleration
 
-  // Integral term with anti-windup
-  state.integral += error * deltaTime
-  state.integral = Math.max(-MAX_INTEGRAL, Math.min(MAX_INTEGRAL, state.integral))
-  const I = KI * state.integral
+    Returns:
+        Control command [vx, vy, omega]
+    \"\"\"
+    # Position error
+    error = goal[:2] - start[:2]
 
-  // Derivative term
-  const derivative = (error - state.previousError) / deltaTime
-  const D = KD * derivative
+    # Velocity (derivative of position)
+    current_vel = robot_state.get('velocity', np.zeros(3))[:2]
 
-  state.previousError = error
+    # PD control
+    control = KP * error - KD * current_vel
 
-  return P + I + D
-}
+    # Limit maximum velocity
+    max_vel = 2.0
+    vel_magnitude = np.linalg.norm(control)
+    if vel_magnitude > max_vel:
+        control = control / vel_magnitude * max_vel
 
-export { pidControl, type PIDState }
-""",
+    # Compute angular velocity (turn towards goal)
+    current_heading = robot_state.get('heading', 0.0)
+    desired_heading = np.arctan2(error[1], error[0])
+    heading_error = desired_heading - current_heading
+
+    # Normalize angle to [-pi, pi]
+    heading_error = np.arctan2(np.sin(heading_error), np.cos(heading_error))
+
+    omega = KP * heading_error
+
+    return np.array([control[0], control[1], omega])
+"""
         }
 
 
-def get_template(algorithm_type: str, algorithm_name: str = None) -> str:
-    """
-    Get a specific algorithm template
-
-    Args:
-        algorithm_type: Category (path_planning, obstacle_avoidance, etc.)
-        algorithm_name: Specific algorithm (astar, dwa, fabrik, etc.)
-
-    Returns:
-        Template code string
-    """
-    templates = AlgorithmTemplates.get_all_templates()
-
-    if algorithm_type not in templates:
-        return ""
-
-    category = templates[algorithm_type]
-
-    if algorithm_name:
-        return category.get(algorithm_name, "")
-
-    # Return first template in category if no specific name given
-    return next(iter(category.values()), "")
-
-
-def get_algorithm_list() -> List[Dict[str, str]]:
-    """
-    Get list of all available algorithms with metadata
-
-    Returns:
-        List of algorithm info dicts
-    """
+def get_algorithm_list() -> List[Dict]:
+    """Get list of all available algorithms with metadata"""
     algorithms = []
 
     templates = AlgorithmTemplates.get_all_templates()
 
-    for category, algos in templates.items():
-        for name, code in algos.items():
-            # Extract description from code comments
-            lines = code.split('\n')
-            description = ""
-            for line in lines[1:10]:  # Check first 10 lines for description
-                if line.strip().startswith('//'):
-                    description += line.strip()[2:].strip() + " "
-
+    for category, algorithms_dict in templates.items():
+        for algo_name in algorithms_dict.keys():
             algorithms.append({
-                "name": name,
-                "category": category,
-                "description": description.strip(),
-                "complexity": extract_complexity(code)
+                "id": f"{category}_{algo_name}",
+                "name": algo_name.upper().replace("_", " "),
+                "category": category.replace("_", " ").title(),
+                "description": f"{algo_name} algorithm for {category}",
+                "language": "python",
+                "framework": "genesis"
             })
 
     return algorithms
-
-
-def extract_complexity(code: str) -> str:
-    """Extract time complexity from code comments"""
-    for line in code.split('\n'):
-        if 'Time Complexity' in line:
-            return line.split('Time Complexity:')[1].strip()
-    return "Unknown"

@@ -38,12 +38,24 @@ class BackendType(Enum):
 
 
 class RobotType(Enum):
-    """Supported robot types"""
+    """Supported robot types - using Genesis built-in assets"""
+    # Simple primitives for testing
     MOBILE_ROBOT = "mobile"
     ROBOTIC_ARM = "arm"
     DRONE = "drone"
-    FRANKA = "franka"
-    GO2 = "go2"
+
+    # Genesis built-in robots (MJCF/XML)
+    FRANKA = "franka"  # Franka Emika Panda arm
+    ANT = "ant"  # Ant quadruped
+    HUMANOID = "humanoid"  # Humanoid robot
+
+    # Genesis built-in robots (URDF)
+    GO2 = "go2"  # Unitree Go2 quadruped
+    ANYMAL = "anymal"  # ANYmal C quadruped
+    KUKA = "kuka"  # KUKA iiwa arm
+    UR5E = "ur5e"  # Universal Robots UR5e arm
+    SHADOW_HAND = "shadow_hand"  # Shadow dexterous hand
+    CRAZYFLIE = "crazyflie"  # Crazyflie 2.X drone
 
 
 @dataclass
@@ -96,18 +108,17 @@ class ObstacleState:
 class GenesisSimulation:
     """
     Genesis simulation manager
-    Handles scene creation, robot control, physics stepping, and rendering
+    Handles scene creation, robot control, physics stepping, and rendering.
+    Uses Genesis built-in assets with relative paths (e.g., "xml/franka_emika_panda/panda.xml")
     """
-
-    # Path to local robot model assets
-    ASSETS_DIR = Path(__file__).parent / "genesis_assets"
 
     def __init__(self, config: GenesisConfig):
         self.config = config
         self.scene: Optional[gs.Scene] = None
         self.robots: Dict[str, Any] = {}  # robot_id -> entity
+        self.robot_types: Dict[str, RobotType] = {}  # robot_id -> robot_type
         self.obstacles: Dict[str, Any] = {}
-        self.algorithms: Dict[str, Callable] = {}  # robot_id -> algorithm function
+        self.algorithms: Dict[str, Dict[str, Any]] = {}  # robot_id -> {function, type, params, goal}
 
         self.is_initialized = False
         self.is_running = False
@@ -304,50 +315,85 @@ class GenesisSimulation:
     @classmethod
     def discover_available_models(cls) -> Dict[str, List[Dict[str, str]]]:
         """
-        Discover all available robot models in the local assets directory
+        Get all available Genesis built-in robot models
 
         Returns:
             Dictionary with categories (urdf, xml) and model information
         """
         models = {
-            "urdf": [],
-            "xml": [],
+            "urdf": [
+                {
+                    "name": "Unitree Go2",
+                    "path": "urdf/go2/urdf/go2.urdf",
+                    "type": "urdf",
+                    "enum": "GO2",
+                    "description": "Quadruped robot"
+                },
+                {
+                    "name": "ANYmal C",
+                    "path": "urdf/anymal_c/urdf/anymal_c.urdf",
+                    "type": "urdf",
+                    "enum": "ANYMAL",
+                    "description": "Quadruped robot"
+                },
+                {
+                    "name": "KUKA iiwa",
+                    "path": "urdf/kuka_iiwa/model.urdf",
+                    "type": "urdf",
+                    "enum": "KUKA",
+                    "description": "7-DOF robotic arm"
+                },
+                {
+                    "name": "Shadow Hand",
+                    "path": "urdf/shadow_hand/shadow_hand.urdf",
+                    "type": "urdf",
+                    "enum": "SHADOW_HAND",
+                    "description": "Dexterous robotic hand"
+                },
+                {
+                    "name": "Crazyflie 2.X",
+                    "path": "urdf/drones/cf2x.urdf",
+                    "type": "urdf",
+                    "enum": "CRAZYFLIE",
+                    "description": "Nano quadcopter drone"
+                },
+            ],
+            "xml": [
+                {
+                    "name": "Franka Panda",
+                    "path": "xml/franka_emika_panda/panda.xml",
+                    "type": "mjcf",
+                    "enum": "FRANKA",
+                    "description": "7-DOF collaborative arm"
+                },
+                {
+                    "name": "Ant",
+                    "path": "xml/ant.xml",
+                    "type": "mjcf",
+                    "enum": "ANT",
+                    "description": "Quadruped ant robot"
+                },
+                {
+                    "name": "Humanoid",
+                    "path": "xml/humanoid.xml",
+                    "type": "mjcf",
+                    "enum": "HUMANOID",
+                    "description": "Bipedal humanoid robot"
+                },
+                {
+                    "name": "UR5e",
+                    "path": "xml/universal_robots_ur5e/ur5e.xml",
+                    "type": "mjcf",
+                    "enum": "UR5E",
+                    "description": "6-DOF collaborative arm"
+                },
+            ],
         }
-
-        # Discover URDF models
-        urdf_dir = cls.ASSETS_DIR / "urdf"
-        if urdf_dir.exists():
-            for model_dir in urdf_dir.iterdir():
-                if model_dir.is_dir():
-                    # Look for .urdf files
-                    urdf_files = list(model_dir.rglob("*.urdf"))
-                    for urdf_file in urdf_files:
-                        models["urdf"].append({
-                            "name": model_dir.name,
-                            "path": str(urdf_file.relative_to(cls.ASSETS_DIR)),
-                            "full_path": str(urdf_file),
-                            "type": "urdf"
-                        })
-
-        # Discover MJCF/XML models
-        xml_dir = cls.ASSETS_DIR / "xml"
-        if xml_dir.exists():
-            for model_dir in xml_dir.iterdir():
-                if model_dir.is_dir():
-                    # Look for .xml files
-                    xml_files = list(model_dir.glob("*.xml"))
-                    for xml_file in xml_files:
-                        models["xml"].append({
-                            "name": model_dir.name,
-                            "path": str(xml_file.relative_to(cls.ASSETS_DIR)),
-                            "full_path": str(xml_file),
-                            "type": "mjcf"
-                        })
 
         return models
 
     def add_robot(self, robot_id: str, robot_type: RobotType, position: Tuple[float, float, float] = (0, 0, 0.5)) -> Any:
-        """Add a robot to the scene"""
+        """Add a robot to the scene using Genesis built-in assets"""
         if not self.is_initialized:
             self.initialize()
 
@@ -355,58 +401,95 @@ class GenesisSimulation:
 
         robot = None
 
-        if robot_type == RobotType.MOBILE_ROBOT:
-            # Create simple mobile robot (box with 4 wheels)
-            robot = self._create_mobile_robot(position)
+        try:
+            # Genesis built-in robots (MJCF/XML format)
+            if robot_type == RobotType.FRANKA:
+                robot = self.scene.add_entity(
+                    gs.morphs.MJCF(file="xml/franka_emika_panda/panda.xml", pos=position)
+                )
+                logger.info(f"✅ Loaded Franka Panda (MJCF)")
 
-        elif robot_type == RobotType.ROBOTIC_ARM:
-            # Use Franka Panda arm if available
-            robot = self._create_robotic_arm(position)
+            elif robot_type == RobotType.ANT:
+                robot = self.scene.add_entity(
+                    gs.morphs.MJCF(file="xml/ant.xml", pos=position)
+                )
+                logger.info(f"✅ Loaded Ant quadruped (MJCF)")
 
-        elif robot_type == RobotType.DRONE:
-            # Create quadcopter
-            robot = self._create_drone(position)
+            elif robot_type == RobotType.HUMANOID:
+                robot = self.scene.add_entity(
+                    gs.morphs.MJCF(file="xml/humanoid.xml", pos=position)
+                )
+                logger.info(f"✅ Loaded Humanoid robot (MJCF)")
 
-        elif robot_type == RobotType.FRANKA:
-            # Load Franka Panda from local MJCF assets
-            try:
-                franka_path = self.ASSETS_DIR / "xml" / "franka_emika_panda" / "panda.xml"
-                if franka_path.exists():
+            # Genesis built-in robots (URDF format)
+            elif robot_type == RobotType.GO2:
+                robot = self.scene.add_entity(
+                    gs.morphs.URDF(file="urdf/go2/urdf/go2.urdf", pos=position)
+                )
+                logger.info(f"✅ Loaded Unitree Go2 (URDF)")
+
+            elif robot_type == RobotType.ANYMAL:
+                robot = self.scene.add_entity(
+                    gs.morphs.URDF(file="urdf/anymal_c/urdf/anymal_c.urdf", pos=position)
+                )
+                logger.info(f"✅ Loaded ANYmal C (URDF)")
+
+            elif robot_type == RobotType.KUKA:
+                robot = self.scene.add_entity(
+                    gs.morphs.URDF(file="urdf/kuka_iiwa/model.urdf", pos=position)
+                )
+                logger.info(f"✅ Loaded KUKA iiwa (URDF)")
+
+            elif robot_type == RobotType.UR5E:
+                robot = self.scene.add_entity(
+                    gs.morphs.MJCF(file="xml/universal_robots_ur5e/ur5e.xml", pos=position)
+                )
+                logger.info(f"✅ Loaded UR5e arm (MJCF)")
+
+            elif robot_type == RobotType.SHADOW_HAND:
+                robot = self.scene.add_entity(
+                    gs.morphs.URDF(file="urdf/shadow_hand/shadow_hand.urdf", pos=position)
+                )
+                logger.info(f"✅ Loaded Shadow Hand (URDF)")
+
+            elif robot_type == RobotType.CRAZYFLIE:
+                robot = self.scene.add_entity(
+                    gs.morphs.URDF(file="urdf/drones/cf2x.urdf", pos=position)
+                )
+                logger.info(f"✅ Loaded Crazyflie 2.X (URDF)")
+
+            # Simple primitives for algorithm testing
+            elif robot_type == RobotType.MOBILE_ROBOT:
+                robot = self._create_mobile_robot(position)
+
+            elif robot_type == RobotType.ROBOTIC_ARM:
+                # Use simple 2-link arm from Genesis
+                try:
                     robot = self.scene.add_entity(
-                        gs.morphs.MJCF(
-                            file=str(franka_path),
-                            pos=position,
-                        )
+                        gs.morphs.URDF(file="urdf/simple/two_link_arm.urdf", pos=position)
                     )
-                    logger.info(f"✅ Loaded Franka Panda from {franka_path}")
-                else:
-                    logger.warning(f"Franka model not found at {franka_path}, falling back to simple arm")
+                    logger.info(f"✅ Loaded simple 2-link arm (URDF)")
+                except Exception as e:
+                    logger.warning(f"Could not load simple arm: {e}, using primitive")
                     robot = self._create_robotic_arm(position)
-            except Exception as e:
-                logger.warning(f"Could not load Franka model: {e}, falling back to simple arm")
-                robot = self._create_robotic_arm(position)
 
-        elif robot_type == RobotType.GO2:
-            # Load Unitree Go2 quadruped from local URDF assets
-            try:
-                go2_path = self.ASSETS_DIR / "urdf" / "go2" / "urdf" / "go2.urdf"
-                if go2_path.exists():
-                    robot = self.scene.add_entity(
-                        gs.morphs.URDF(
-                            file=str(go2_path),
-                            pos=position,
-                        )
-                    )
-                    logger.info(f"✅ Loaded Go2 quadruped from {go2_path}")
+            elif robot_type == RobotType.DRONE:
+                robot = self._create_drone(position)
+
+        except Exception as e:
+            logger.error(f"Failed to load robot {robot_type.value}: {e}")
+            # Try fallback primitives
+            if robot_type in [RobotType.MOBILE_ROBOT, RobotType.ROBOTIC_ARM, RobotType.DRONE]:
+                if robot_type == RobotType.MOBILE_ROBOT:
+                    robot = self._create_mobile_robot(position)
+                elif robot_type == RobotType.ROBOTIC_ARM:
+                    robot = self._create_robotic_arm(position)
                 else:
-                    logger.warning(f"Go2 model not found at {go2_path}")
-                    robot = None
-            except Exception as e:
-                logger.warning(f"Could not load Go2 model: {e}")
-                robot = None
+                    robot = self._create_drone(position)
 
         if robot is not None:
             self.robots[robot_id] = robot
+            self.robot_types[robot_id] = robot_type  # Store robot type for algorithm execution
             logger.info(f"✅ Robot {robot_id} added successfully")
         else:
             logger.error(f"❌ Failed to create robot {robot_id}")
@@ -439,31 +522,23 @@ class GenesisSimulation:
         return robot
 
     def _create_drone(self, position: Tuple[float, float, float]) -> Any:
-        """Create a quadcopter drone (Crazyflie)"""
-        # Try to load Crazyflie drone from local assets
+        """Create a quadcopter drone (Crazyflie) using Genesis built-in asset"""
         try:
-            drone_path = self.ASSETS_DIR / "urdf" / "drones" / "cf2x.urdf"
-            if drone_path.exists():
-                robot = self.scene.add_entity(
-                    gs.morphs.URDF(
-                        file=str(drone_path),
-                        pos=position,
-                    )
+            robot = self.scene.add_entity(
+                gs.morphs.URDF(
+                    file="urdf/drones/cf2x.urdf",  # Genesis relative path
+                    pos=position,
                 )
-                logger.info(f"✅ Loaded Crazyflie drone from {drone_path}")
-                return robot
+            )
+            logger.info(f"✅ Loaded Crazyflie drone (URDF)")
+            return robot
         except Exception as e:
             logger.warning(f"Could not load drone model: {e}, falling back to simple sphere")
-
-        # Fallback to simple sphere
-        robot = self.scene.add_entity(
-            gs.morphs.Sphere(
-                pos=position,
-                radius=0.2,
-                fixed=False,
+            # Fallback to simple sphere
+            robot = self.scene.add_entity(
+                gs.morphs.Sphere(pos=position, radius=0.2, fixed=False)
             )
-        )
-        return robot
+            return robot
 
     def add_obstacle(self, obstacle_id: str, position: Tuple[float, float, float], size: Tuple[float, float, float]) -> Any:
         """Add an obstacle to the scene"""
@@ -491,14 +566,35 @@ class GenesisSimulation:
         self.scene.build()
         logger.info("✅ Scene built successfully")
 
-    def set_algorithm(self, robot_id: str, algorithm: Callable, params: Dict[str, Any] = None):
-        """Set algorithm for a robot"""
+    def set_algorithm(
+        self,
+        robot_id: str,
+        algorithm: Callable,
+        algorithm_type: str,
+        params: Dict[str, Any] = None,
+        goal: Optional[np.ndarray] = None
+    ):
+        """
+        Set algorithm for a robot
+
+        Args:
+            robot_id: ID of the robot
+            algorithm: Compiled algorithm function
+            algorithm_type: Type of algorithm (path_planning, obstacle_avoidance, etc.)
+            params: Algorithm parameters
+            goal: Goal position/state for the robot (if applicable)
+        """
         if robot_id not in self.robots:
             logger.error(f"Robot {robot_id} not found")
             return
 
-        self.algorithms[robot_id] = algorithm
-        logger.info(f"Algorithm set for robot {robot_id}")
+        self.algorithms[robot_id] = {
+            "function": algorithm,
+            "type": algorithm_type,
+            "params": params or {},
+            "goal": goal
+        }
+        logger.info(f"Algorithm ({algorithm_type}) set for robot {robot_id}")
 
     def start(self):
         """Start simulation"""
@@ -523,16 +619,40 @@ class GenesisSimulation:
             return {}
 
         # Execute algorithms for each robot
-        for robot_id, algorithm in self.algorithms.items():
+        for robot_id, algo_data in self.algorithms.items():
             if robot_id in self.robots:
                 try:
-                    # Get robot state
                     robot = self.robots[robot_id]
-                    # TODO: Extract actual state from Genesis entity
+                    algorithm_func = algo_data["function"]
+                    algorithm_type = algo_data["type"]
+                    algo_params = algo_data["params"]
+                    goal = algo_data.get("goal")
 
-                    # Execute algorithm
-                    # TODO: Apply algorithm output to robot
-                    pass
+                    # Extract robot state from Genesis entity
+                    robot_state = self._extract_robot_state(robot, robot_id)
+
+                    # Prepare obstacle information
+                    obstacles = self._get_obstacles_list()
+
+                    # Execute algorithm based on type
+                    result = self._execute_algorithm(
+                        algorithm_func,
+                        algorithm_type,
+                        robot_state,
+                        obstacles,
+                        goal,
+                        algo_params
+                    )
+
+                    # Apply algorithm result to robot
+                    if result is not None:
+                        self._apply_algorithm_result(
+                            robot,
+                            robot_id,
+                            algorithm_type,
+                            result
+                        )
+
                 except Exception as e:
                     logger.error(f"Algorithm execution failed for {robot_id}: {e}")
 
@@ -777,6 +897,43 @@ class GenesisSimulation:
             logger.error(f"Failed to apply action to {robot_id}: {e}")
             return False
 
+    @staticmethod
+    def _tensor_to_list(value) -> List[float]:
+        """
+        Convert Genesis Tensor, numpy array, or other types to JSON-serializable list
+
+        Args:
+            value: Genesis Tensor, numpy array, list, tuple, or other numeric type
+
+        Returns:
+            JSON-serializable list of floats
+        """
+        import numpy as np
+
+        # Genesis Tensor - check for to_numpy() method
+        if hasattr(value, 'to_numpy'):
+            return value.to_numpy().tolist()
+
+        # Genesis Tensor - alternative method
+        if hasattr(value, 'numpy'):
+            return value.numpy().tolist()
+
+        # Numpy array
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+
+        # Already a list or tuple
+        if isinstance(value, (list, tuple)):
+            return list(value)
+
+        # Single numeric value
+        if isinstance(value, (int, float)):
+            return [float(value)]
+
+        # Fallback to zero vector
+        logger.warning(f"Could not convert {type(value)} to list, using default [0, 0, 0]")
+        return [0, 0, 0]
+
     def get_robot_state(self, robot_id: str) -> Optional[Dict[str, Any]]:
         """
         Get current state of a robot
@@ -794,28 +951,28 @@ class GenesisSimulation:
             # Get position
             if hasattr(robot, 'get_pos'):
                 pos = robot.get_pos()
-                state['position'] = pos.tolist() if isinstance(pos, np.ndarray) else list(pos)
+                state['position'] = self._tensor_to_list(pos)
             else:
                 state['position'] = [0, 0, 0]
 
             # Get velocity
             if hasattr(robot, 'get_vel'):
                 vel = robot.get_vel()
-                state['velocity'] = vel.tolist() if isinstance(vel, np.ndarray) else list(vel)
+                state['velocity'] = self._tensor_to_list(vel)
             else:
                 state['velocity'] = [0, 0, 0]
 
             # Get quaternion
             if hasattr(robot, 'get_quat'):
                 quat = robot.get_quat()
-                state['quaternion'] = quat.tolist() if isinstance(quat, np.ndarray) else list(quat)
+                state['quaternion'] = self._tensor_to_list(quat)
             else:
                 state['quaternion'] = [0, 0, 0, 1]
 
             # Get angular velocity
             if hasattr(robot, 'get_ang'):
                 ang = robot.get_ang()
-                state['angular_velocity'] = ang.tolist() if isinstance(ang, np.ndarray) else list(ang)
+                state['angular_velocity'] = self._tensor_to_list(ang)
             else:
                 state['angular_velocity'] = [0, 0, 0]
 
@@ -824,11 +981,11 @@ class GenesisSimulation:
                 n_dofs = robot.n_dofs
                 dofs_idx = list(range(n_dofs))
                 joint_pos = robot.get_dofs_position(dofs_idx)
-                state['joint_positions'] = joint_pos.tolist() if isinstance(joint_pos, np.ndarray) else list(joint_pos)
+                state['joint_positions'] = self._tensor_to_list(joint_pos)
 
                 if hasattr(robot, 'get_dofs_velocity'):
                     joint_vel = robot.get_dofs_velocity(dofs_idx)
-                    state['joint_velocities'] = joint_vel.tolist() if isinstance(joint_vel, np.ndarray) else list(joint_vel)
+                    state['joint_velocities'] = self._tensor_to_list(joint_vel)
 
             return state
 
@@ -874,6 +1031,200 @@ class GenesisSimulation:
         except Exception as e:
             logger.error(f"Failed to set position for {robot_id}: {e}")
             return False
+
+    def _extract_robot_state(self, robot: Any, robot_id: str) -> Dict[str, Any]:
+        """
+        Extract current state from Genesis robot entity
+
+        Returns dict with: position, velocity, orientation, joint_angles (for arms)
+        """
+        try:
+            # Get basic state (available for all entities)
+            position = robot.get_pos()  # Returns np.ndarray (x, y, z)
+            velocity = robot.get_vel()  # Returns np.ndarray (vx, vy, vz)
+
+            state = {
+                "position": position,
+                "velocity": velocity,
+                "robot_id": robot_id
+            }
+
+            # For articulated robots (arms, hands), get joint states
+            robot_type = self.robot_types.get(robot_id)
+            if robot_type in [RobotType.FRANKA, RobotType.KUKA, RobotType.UR5E,
+                             RobotType.ROBOTIC_ARM, RobotType.SHADOW_HAND]:
+                try:
+                    # Get all DOF indices
+                    n_dofs = robot.n_dofs
+                    dof_indices = list(range(n_dofs))
+
+                    # Get joint positions and velocities
+                    joint_positions = robot.get_dofs_position(dofs_idx_local=dof_indices)
+                    joint_velocities = robot.get_dofs_velocity(dofs_idx_local=dof_indices)
+
+                    state["joint_angles"] = joint_positions
+                    state["joint_velocities"] = joint_velocities
+                except Exception as e:
+                    logger.debug(f"Could not get joint state: {e}")
+
+            return state
+
+        except Exception as e:
+            logger.error(f"Failed to extract robot state: {e}")
+            return {"position": np.zeros(3), "velocity": np.zeros(3)}
+
+    def _get_obstacles_list(self) -> List[Dict]:
+        """Get list of obstacles in format expected by algorithms"""
+        obstacles = []
+        for obs_id, obs_entity in self.obstacles.items():
+            try:
+                position = obs_entity.get_pos()
+                # Estimate radius from entity (approximate for now)
+                radius = 0.5  # Default radius
+                obstacles.append({
+                    "id": obs_id,
+                    "position": position,
+                    "radius": radius
+                })
+            except Exception as e:
+                logger.debug(f"Could not get obstacle {obs_id} state: {e}")
+
+        return obstacles
+
+    def _execute_algorithm(
+        self,
+        algorithm_func: Callable,
+        algorithm_type: str,
+        robot_state: Dict[str, Any],
+        obstacles: List[Dict],
+        goal: Optional[np.ndarray],
+        params: Dict[str, Any]
+    ) -> Any:
+        """
+        Execute algorithm function with appropriate parameters based on type
+
+        Returns algorithm output (varies by type)
+        """
+        try:
+            if algorithm_type == "path_planning":
+                # find_path(start, goal, obstacles, robot_state) -> List[np.ndarray]
+                if goal is None:
+                    return None
+                return algorithm_func(
+                    robot_state["position"],
+                    goal,
+                    obstacles,
+                    robot_state
+                )
+
+            elif algorithm_type == "obstacle_avoidance":
+                # compute_safe_velocity(current_pos, current_vel, obstacles, goal, max_speed, params) -> np.ndarray
+                max_speed = params.get("max_speed", 2.0)
+                goal_pos = goal if goal is not None else robot_state["position"] + np.array([1, 0, 0])
+                return algorithm_func(
+                    robot_state["position"],
+                    robot_state["velocity"],
+                    obstacles,
+                    goal_pos,
+                    max_speed,
+                    params
+                )
+
+            elif algorithm_type == "inverse_kinematics":
+                # solve_ik(target_pos, current_angles, link_lengths, params) -> np.ndarray
+                if goal is None or "joint_angles" not in robot_state:
+                    return None
+                link_lengths = params.get("link_lengths", np.array([1.0, 0.8, 0.6, 0.4]))
+                return algorithm_func(
+                    goal,
+                    robot_state["joint_angles"],
+                    link_lengths,
+                    params
+                )
+
+            elif algorithm_type == "computer_vision":
+                # process_vision(camera_state, scene_objects, params) -> List[Dict]
+                # For now, pass basic camera info
+                camera_state = {
+                    "robot_position": robot_state["position"],
+                    "robot_velocity": robot_state["velocity"]
+                }
+                scene_objects = obstacles  # Obstacles as scene objects for now
+                return algorithm_func(camera_state, scene_objects, params)
+
+            else:
+                logger.warning(f"Unknown algorithm type: {algorithm_type}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Algorithm execution error: {e}")
+            return None
+
+    def _apply_algorithm_result(
+        self,
+        robot: Any,
+        robot_id: str,
+        algorithm_type: str,
+        result: Any
+    ):
+        """
+        Apply algorithm output to Genesis robot
+
+        Different algorithms produce different outputs:
+        - path_planning: List of waypoints
+        - obstacle_avoidance: Velocity vector
+        - inverse_kinematics: Joint angles
+        - computer_vision: Detected objects (no direct control)
+        """
+        try:
+            robot_type = self.robot_types.get(robot_id)
+
+            if algorithm_type == "path_planning":
+                # Result is List[np.ndarray] of waypoints
+                if isinstance(result, list) and len(result) > 0:
+                    # Navigate to first waypoint
+                    target = result[0]
+                    current_pos = robot.get_pos()
+                    direction = target - current_pos
+                    distance = np.linalg.norm(direction)
+
+                    if distance > 0.1:  # Not at waypoint yet
+                        direction = direction / distance  # Normalize
+                        velocity = direction * 1.0  # 1 m/s speed
+
+                        # Apply velocity
+                        robot.set_velocity(
+                            linear=(float(velocity[0]), float(velocity[1]), float(velocity[2])),
+                            angular=(0, 0, 0)
+                        )
+
+            elif algorithm_type == "obstacle_avoidance":
+                # Result is np.ndarray velocity vector
+                if isinstance(result, np.ndarray) and len(result) >= 2:
+                    # Apply safe velocity (assume XZ plane for mobile robots)
+                    robot.set_velocity(
+                        linear=(float(result[0]), 0, float(result[1])),
+                        angular=(0, 0, 0)
+                    )
+
+            elif algorithm_type == "inverse_kinematics":
+                # Result is np.ndarray of joint angles
+                if isinstance(result, np.ndarray) and robot_type in [
+                    RobotType.FRANKA, RobotType.KUKA, RobotType.UR5E,
+                    RobotType.ROBOTIC_ARM, RobotType.SHADOW_HAND
+                ]:
+                    # Apply joint angles as position targets
+                    n_dofs = min(len(result), robot.n_dofs)
+                    dof_indices = list(range(n_dofs))
+                    robot.control_dofs_position(result[:n_dofs], dof_indices)
+
+            elif algorithm_type == "computer_vision":
+                # Computer vision doesn't directly control robot
+                # Results would be used by other algorithms
+                pass
+
+        except Exception as e:
+            logger.error(f"Failed to apply algorithm result: {e}")
 
     def _get_state(self) -> Dict[str, Any]:
         """Get current simulation state"""
