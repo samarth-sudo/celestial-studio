@@ -54,6 +54,8 @@ const GenesisViewer: React.FC<GenesisViewerProps> = ({
   const [streamStats, setStreamStats] = useState<StreamStats | null>(null);
   const [fps, setFps] = useState(0);
   const [latency, setLatency] = useState(0);
+  const [simulationCode, setSimulationCode] = useState<string>('');
+  const [showCodeViewer, setShowCodeViewer] = useState(false);
 
   const frameCountRef = useRef(0);
   const lastFrameTimeRef = useRef(Date.now());
@@ -277,8 +279,51 @@ const GenesisViewer: React.FC<GenesisViewerProps> = ({
     };
   }, [connected, backendUrl]);
 
+  // Fetch simulation code for code viewer
+  useEffect(() => {
+    if (!connected) return;
+
+    const fetchSimulationCode = async () => {
+      try {
+        const res = await fetch(`${backendUrl}/api/genesis/simulation-code`);
+        const data = await res.json();
+        setSimulationCode(data.code || '# No code generated yet');
+      } catch (error) {
+        console.error('Failed to fetch simulation code:', error);
+        setSimulationCode('# Error loading code');
+      }
+    };
+
+    // Fetch initially
+    fetchSimulationCode();
+
+    // Refresh every 3 seconds
+    const intervalId = setInterval(fetchSimulationCode, 3000);
+
+    return () => clearInterval(intervalId);
+  }, [connected, backendUrl]);
+
   // Control simulation
-  const sendControl = (action: string) => {
+  const sendControl = async (action: string) => {
+    try {
+      const response = await fetch(`${backendUrl}/api/genesis/control`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Control failed: ${response.statusText}`);
+      }
+
+      console.log(`✅ Control action '${action}' executed`);
+    } catch (error) {
+      console.error(`❌ Failed to execute '${action}':`, error);
+    }
+  };
+
+  // Old WebSocket control method (kept for compatibility)
+  const sendControlWS = (action: string) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'control',
@@ -293,6 +338,44 @@ const GenesisViewer: React.FC<GenesisViewerProps> = ({
       <div className="video-container">
         <canvas ref={canvasRef} className="video-canvas" />
         <img ref={imgRef} style={{ display: 'none' }} alt="" />
+
+        {/* Code Viewer Toggle Button */}
+        <button
+          onClick={() => setShowCodeViewer(!showCodeViewer)}
+          className="code-viewer-toggle"
+          disabled={!connected}
+          title="View generated Genesis code"
+        >
+          {showCodeViewer ? '← Hide Code' : '📄 View Code'}
+        </button>
+
+        {/* Code Viewer Panel */}
+        {showCodeViewer && (
+          <div className="code-viewer-panel">
+            <div className="code-viewer-header">
+              <h3>Genesis Simulation Code</h3>
+              <div className="code-viewer-actions">
+                <button
+                  onClick={() => navigator.clipboard.writeText(simulationCode)}
+                  className="copy-btn"
+                  title="Copy code to clipboard"
+                >
+                  📋 Copy
+                </button>
+                <button
+                  onClick={() => setShowCodeViewer(false)}
+                  className="close-btn"
+                  title="Close code viewer"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            <pre className="code-display">
+              <code>{simulationCode}</code>
+            </pre>
+          </div>
+        )}
 
         {/* Connection Status Overlay */}
         {!connected && (

@@ -62,6 +62,17 @@ class SceneGenerator:
         """Create environment-specific floor and walls"""
 
         environments = {
+            "tabletop": {
+                "floor": {
+                    "size": [3, 3],  # Smaller 3x3m workspace for manipulation
+                    "color": "#D2B48C",  # Tan/wood color
+                    "texture": "wood",
+                    "gridLines": False
+                },
+                "walls": False,  # No walls for tabletop
+                "wallHeight": 0,
+                "wallColor": "#FFFFFF"
+            },
             "warehouse": {
                 "floor": {
                     "size": [20, 20],

@@ -117,11 +117,13 @@ class GenesisSimulation:
         self.scene: Optional[gs.Scene] = None
         self.robots: Dict[str, Any] = {}  # robot_id -> entity
         self.robot_types: Dict[str, RobotType] = {}  # robot_id -> robot_type
+        self.robot_motor_dofs: Dict[str, List[int]] = {}  # robot_id -> motor DOF indices
         self.obstacles: Dict[str, Any] = {}
         self.algorithms: Dict[str, Dict[str, Any]] = {}  # robot_id -> {function, type, params, goal}
 
         self.is_initialized = False
         self.is_running = False
+        self._scene_built = False  # Track if scene.build() has been called
         self.step_count = 0
         self.start_time = 0.0
 
@@ -409,6 +411,9 @@ class GenesisSimulation:
                 )
                 logger.info(f"✅ Loaded Franka Panda (MJCF)")
 
+                # Configure PD controller BEFORE scene.build() (Genesis pattern)
+                self._configure_franka_controller(robot, robot_id)
+
             elif robot_type == RobotType.ANT:
                 robot = self.scene.add_entity(
                     gs.morphs.MJCF(file="xml/ant.xml", pos=position)
@@ -491,10 +496,77 @@ class GenesisSimulation:
             self.robots[robot_id] = robot
             self.robot_types[robot_id] = robot_type  # Store robot type for algorithm execution
             logger.info(f"✅ Robot {robot_id} added successfully")
+
+            # AUTO-BUILD scene after adding robot (Genesis pattern - Line 42, 199)
+            # This must be called after all entities are added and BEFORE stepping
+            if not self._scene_built:
+                logger.info("🔨 Auto-building scene after robot addition...")
+                self.build_scene()
+                self._scene_built = True
         else:
             logger.error(f"❌ Failed to create robot {robot_id}")
 
         return robot
+
+    def _configure_franka_controller(self, robot: Any, robot_id: str):
+        """
+        Configure Franka Panda PD controller using official Genesis pattern.
+
+        Based on Genesis documentation:
+        /genesis-doc/source/user_guide/getting_started/control_your_robot.md
+        Lines 69-86, 214-230
+
+        Args:
+            robot: The Franka robot entity
+            robot_id: Unique robot identifier
+        """
+        try:
+            # Joint names from Genesis official documentation (Line 52-62, 201-211)
+            jnt_names = [
+                'joint1',
+                'joint2',
+                'joint3',
+                'joint4',
+                'joint5',
+                'joint6',
+                'joint7',
+                'finger_joint1',
+                'finger_joint2',
+            ]
+
+            # Get DOF indices using official Genesis API (Line 63, 212)
+            dofs_idx = [robot.get_joint(name).dof_idx_local for name in jnt_names]
+
+            # Set positional gains (Line 72-75, 216-219)
+            robot.set_dofs_kp(
+                kp=np.array([4500, 4500, 3500, 3500, 2000, 2000, 2000, 100, 100]),
+                dofs_idx_local=dofs_idx,
+            )
+            logger.info(f"✅ Set Franka PD kp gains: [4500, 4500, 3500, 3500, 2000, 2000, 2000, 100, 100]")
+
+            # Set velocity gains (Line 77-80, 221-224)
+            robot.set_dofs_kv(
+                kv=np.array([450, 450, 350, 350, 200, 200, 200, 10, 10]),
+                dofs_idx_local=dofs_idx,
+            )
+            logger.info(f"✅ Set Franka PD kv gains: [450, 450, 350, 350, 200, 200, 200, 10, 10]")
+
+            # Set force range for safety (Line 82-86, 226-230)
+            robot.set_dofs_force_range(
+                lower=np.array([-87, -87, -87, -87, -12, -12, -12, -100, -100]),
+                upper=np.array([87, 87, 87, 87, 12, 12, 12, 100, 100]),
+                dofs_idx_local=dofs_idx,
+            )
+            logger.info(f"✅ Set Franka force limits: [-87, -87, -87, -87, -12, -12, -12, -100, -100] to [87, 87, 87, 87, 12, 12, 12, 100, 100]")
+
+            # Store DOF indices for later control commands
+            self.robot_motor_dofs[robot_id] = dofs_idx
+            logger.info(f"✅ Stored {len(dofs_idx)} motor DOF indices for {robot_id}")
+
+        except Exception as e:
+            logger.error(f"❌ Failed to configure Franka controller: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _create_mobile_robot(self, position: Tuple[float, float, float]) -> Any:
         """Create a simple 4-wheeled mobile robot"""
@@ -873,8 +945,22 @@ class GenesisSimulation:
 
             # For robots with DOFs (URDF/MJCF), use joint control
             elif hasattr(robot, 'control_dofs_position'):
-                # Get number of DOFs
-                if hasattr(robot, 'n_dofs'):
+                # Use stored motor DOF indices if available (configured PD controller)
+                # This ensures we only control motor joints, not all DOFs
+                if robot_id in self.robot_motor_dofs:
+                    dofs_idx = self.robot_motor_dofs[robot_id]
+                    n_dofs = len(dofs_idx)
+
+                    # Trim action to match motor DOFs
+                    action_array = np.array(action[:n_dofs])
+
+                    # Apply position control using official Genesis pattern (Line 111-114, 245-248)
+                    robot.control_dofs_position(action_array, dofs_idx)
+                    logger.debug(f"Applied joint positions to {robot_id} (using {n_dofs} motor DOFs)")
+                    return True
+
+                # Fallback: use all DOFs if motor DOFs not configured
+                elif hasattr(robot, 'n_dofs'):
                     n_dofs = robot.n_dofs
                     dofs_idx = list(range(n_dofs))
 
@@ -883,7 +969,7 @@ class GenesisSimulation:
 
                     # Apply position control
                     robot.control_dofs_position(action_array, dofs_idx)
-                    logger.debug(f"Applied joint positions to {robot_id}")
+                    logger.debug(f"Applied joint positions to {robot_id} (using all {n_dofs} DOFs)")
                     return True
                 else:
                     logger.warning(f"Robot {robot_id} has DOF control but n_dofs not found")
@@ -902,6 +988,9 @@ class GenesisSimulation:
         """
         Convert Genesis Tensor, numpy array, or other types to JSON-serializable list
 
+        IMPORTANT: Handles MPS tensors on Apple Silicon (Metal backend)
+        MPS tensors must be moved to CPU before numpy conversion
+
         Args:
             value: Genesis Tensor, numpy array, list, tuple, or other numeric type
 
@@ -910,13 +999,35 @@ class GenesisSimulation:
         """
         import numpy as np
 
-        # Genesis Tensor - check for to_numpy() method
+        # Try to_numpy() first (Genesis preferred method)
         if hasattr(value, 'to_numpy'):
-            return value.to_numpy().tolist()
+            try:
+                return value.to_numpy().tolist()
+            except Exception as e:
+                logger.debug(f"to_numpy() failed: {e}, trying alternatives")
 
-        # Genesis Tensor - alternative method
+        # Handle PyTorch/Genesis tensors (check device first for MPS/CUDA)
+        if hasattr(value, 'device') and hasattr(value, 'cpu'):
+            # Move MPS/CUDA tensors to CPU before numpy conversion
+            try:
+                cpu_value = value.cpu()
+                return cpu_value.numpy().tolist()
+            except Exception as e:
+                logger.debug(f"CPU conversion failed: {e}")
+
+        # Try direct numpy conversion (will fail on MPS)
         if hasattr(value, 'numpy'):
-            return value.numpy().tolist()
+            try:
+                return value.numpy().tolist()
+            except TypeError as e:
+                # MPS tensor error detected
+                if 'mps' in str(e).lower() or 'device' in str(e).lower():
+                    logger.debug("MPS/GPU tensor detected, using .cpu() conversion")
+                    if hasattr(value, 'cpu'):
+                        return value.cpu().numpy().tolist()
+                    elif hasattr(value, 'to'):
+                        return value.to('cpu').numpy().tolist()
+                raise  # Re-raise if not MPS error
 
         # Numpy array
         if isinstance(value, np.ndarray):

@@ -97,12 +97,16 @@ JSON:"""
             # Parse extracted requirements
             extracted = json.loads(json_text)
 
-            # Merge with existing requirements (new values override old)
+            # Merge with existing requirements - IMPROVED: Skip all empty/null values
             for key, value in extracted.items():
-                if value is not None and value != [] and value != "":
-                    self.requirements[key] = value
+                # Skip null, empty array, empty string, or literal "null" string
+                if value in [None, [], "", "null"]:
+                    continue
+                # Only add non-empty values
+                self.requirements[key] = value
 
             # Apply smart defaults based on robot type (if environment not specified)
+            # This runs AFTER merging so empty environments don't block it
             if 'robot_type' in self.requirements and 'environment' not in self.requirements:
                 robot_type = self.requirements['robot_type']
                 if robot_type == 'arm':
@@ -117,6 +121,11 @@ JSON:"""
                 elif robot_type == 'humanoid':
                     self.requirements['environment'] = 'indoor'
                     print(f"✨ Auto-set environment to 'indoor' for humanoid")
+
+            # Debug logging to verify smart defaults worked
+            print(f"🔍 DEBUG - Final requirements: {json.dumps(self.requirements, indent=2)}")
+            print(f"🔍 DEBUG - Missing info: {self.get_missing_info()}")
+            print(f"🔍 DEBUG - Ready to generate: {self.is_ready_to_generate()}")
 
         except Exception as e:
             print(f"Error extracting requirements: {e}")
